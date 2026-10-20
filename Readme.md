@@ -172,4 +172,5 @@ Before finishing, verify that:
 
 **IMPORTANT:** Prioritize actual gameplay over visual complexity. Do not generate a beautiful city with broken controls. Do not create fake buttons or claim that unfinished features work. If the complete game is too large for one generation, deliver a fully working first version with movement, driving, a small city, a minimap, and one mission before expanding it.
 
-Start by implementing the playable game, then test each system before adding the next one.
+Start by implementing the playable game, then test each system before adding the next one.#   A r g o n - - 4  
+ 

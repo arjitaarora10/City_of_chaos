@@ -1,0 +1,3786 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>CITY OF CHAOS — 3D Open-World Action Game</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=Orbitron:wght@600;800;900&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
+    html, body {
+      margin: 0; padding: 0; width: 100%; height: 100%;
+      overflow: hidden; background: #07090e;
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      color: #f8fafc;
+    }
+    .font-display { font-family: 'Orbitron', sans-serif; }
+    #game-canvas {
+      position: fixed; inset: 0; width: 100vw; height: 100vh;
+      display: block; z-index: 1; cursor: crosshair;
+    }
+    #hud-layer {
+      position: fixed; inset: 0; z-index: 10; pointer-events: none;
+    }
+    .interactive-ui { pointer-events: auto; }
+    /* Glassmorphism panels */
+    .hud-glass {
+      background: rgba(10, 14, 24, 0.78);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+    }
+    .hud-glass-amber {
+      background: rgba(18, 14, 10, 0.85);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(245, 158, 11, 0.4);
+      box-shadow: 0 8px 25px rgba(245, 158, 11, 0.15);
+    }
+    /* Wanted star animations */
+    @keyframes pulsePoliceRed {
+      0%, 100% { color: #ef4444; text-shadow: 0 0 12px #ef4444; transform: scale(1.08); }
+      50% { color: #3b82f6; text-shadow: 0 0 12px #3b82f6; transform: scale(0.96); }
+    }
+    @keyframes pulseSearchBlue {
+      0%, 100% { color: #60a5fa; opacity: 1; }
+      50% { color: #93c5fd; opacity: 0.35; }
+    }
+    .star-pursuit { animation: pulsePoliceRed 0.65s infinite; }
+    .star-searching { animation: pulseSearchBlue 1.1s infinite; }
+    /* Minimap wrapper */
+    #minimap-wrapper {
+      position: relative;
+      width: 176px; height: 176px;
+      border-radius: 9999px;
+      padding: 5px;
+      background: conic-gradient(#22c55e 0deg 180deg, #3b82f6 180deg 360deg);
+      box-shadow: 0 0 25px rgba(0,0,0,0.8), inset 0 0 8px rgba(0,0,0,0.8);
+    }
+    #minimap-canvas {
+      width: 100%; height: 100%;
+      border-radius: 9999px;
+      background: #0b1320;
+      display: block;
+      border: 2px solid rgba(15, 23, 42, 0.95);
+    }
+    /* Custom scrollbars for modals */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: rgba(15,23,42,0.6); }
+    ::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.4); border-radius: 3px; }
+    /* Damage flash overlay */
+    #damage-flash {
+      position: fixed; inset: 0; pointer-events: none; z-index: 8;
+      background: radial-gradient(circle, transparent 45%, rgba(220, 38, 38, 0.55) 100%);
+      opacity: 0; transition: opacity 0.15s ease-out;
+    }
+    /* Crosshair */
+    #crosshair {
+      position: fixed; left: 50%; top: 50%;
+      transform: translate(-50%, -50%);
+      width: 26px; height: 26px;
+      pointer-events: none; z-index: 9;
+      transition: transform 0.08s ease;
+    }
+    .ch-line {
+      position: absolute; background: rgba(255, 255, 255, 0.88);
+      box-shadow: 0 0 4px rgba(0,0,0,0.9);
+    }
+  </style>
+</head>
+<body>
+  <!-- 3D WebGL Canvas -->
+  <canvas id="game-canvas"></canvas>
+
+  <!-- Damage & Police Vignette Overlay -->
+  <div id="damage-flash"></div>
+
+  <!-- Dynamic Reticle / Crosshair -->
+  <div id="crosshair">
+    <div class="ch-line" style="width:2px;height:7px;left:12px;top:0;"></div>
+    <div class="ch-line" style="width:2px;height:7px;left:12px;bottom:0;"></div>
+    <div class="ch-line" style="width:7px;height:2px;left:0;top:12px;"></div>
+    <div class="ch-line" style="width:7px;height:2px;right:0;top:12px;"></div>
+    <div id="ch-dot" style="position:absolute;width:4px;height:4px;border-radius:50%;background:#f59e0b;left:11px;top:11px;"></div>
+    <div id="hit-marker" class="hidden" style="position:absolute;inset:3px;border:2px solid #ef4444;transform:rotate(45deg);"></div>
+  </div>
+
+  <!-- MAIN GTA-STYLE HUD LAYER -->
+  <div id="hud-layer" class="flex flex-col justify-between p-3 sm:p-4">
+
+    <!-- TOP BAR: Branding / Location / Quick Controls (Left) + Cash / Wanted / Weapon / Time (Right) -->
+    <div class="flex justify-between items-start gap-2">
+
+      <!-- Top-Left: District, Camera Lock & Quick Action Toolbar -->
+      <div class="flex flex-col gap-2 max-w-xs sm:max-w-md">
+        <div class="hud-glass rounded-xl px-3.5 py-2 flex items-center gap-3 interactive-ui">
+          <div class="flex items-center gap-2">
+            <span class="inline-block w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span>
+            <span class="font-display font-black tracking-wider text-xs sm:text-sm text-amber-400">CITY OF CHAOS</span>
+          </div>
+          <span class="text-slate-500">|</span>
+          <span id="hud-district" class="text-xs font-semibold text-slate-200 truncate">Downtown Core</span>
+          <span id="hud-interior-badge" class="hidden px-2 py-0.5 text-[10px] font-bold uppercase rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">INSIDE</span>
+        </div>
+
+        <!-- Quick Interactive Bar (Map, Inventory/Shop, Phone, Weather/Time, Audio, Pause) -->
+        <div class="flex flex-wrap gap-1.5 interactive-ui">
+          <button id="btn-open-map" onclick="window.GameApp.toggleMap()" class="hud-glass hover:bg-slate-800/90 active:scale-95 transition px-2.5 py-1.5 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 text-slate-200" title="City Map (M)">
+            <span class="text-amber-400 font-bold">[M]</span> Map
+          </button>
+          <button id="btn-open-inv" onclick="window.GameApp.toggleInventory()" class="hud-glass hover:bg-slate-800/90 active:scale-95 transition px-2.5 py-1.5 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 text-slate-200" title="Character, Weapons, Garage & Shops (Tab)">
+            <span class="text-cyan-400 font-bold">[Tab]</span> Gear &amp; Garage
+          </button>
+          <button id="btn-open-phone" onclick="window.GameApp.togglePhone()" class="hud-glass hover:bg-slate-800/90 active:scale-95 transition px-2.5 py-1.5 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 text-slate-200" title="In-Game Smartphone (N)">
+            <span class="text-emerald-400 font-bold">[N]</span> Phone
+            <span id="phone-badge" class="w-2 h-2 rounded-full bg-emerald-400"></span>
+          </button>
+          <button id="btn-cycle-weather" onclick="window.GameApp.cycleEnvironment()" class="hud-glass hover:bg-slate-800/90 active:scale-95 transition px-2.5 py-1.5 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 text-slate-200" title="Cycle Sunset / Night / Rain / Day">
+            <span id="env-icon">🌇</span> <span id="env-label">Sunset</span>
+          </button>
+          <button id="btn-toggle-audio" onclick="window.GameApp.toggleAudioMute()" class="hud-glass hover:bg-slate-800/90 active:scale-95 transition px-2.5 py-1.5 rounded-lg text-[11px] font-semibold flex items-center gap-1 text-slate-200" title="Mute / Unmute Synthesized Audio">
+            <span id="audio-icon">🔊</span>
+          </button>
+          <button id="btn-open-pause" onclick="window.GameApp.togglePause()" class="hud-glass hover:bg-slate-800/90 active:scale-95 transition px-2.5 py-1.5 rounded-lg text-[11px] font-semibold flex items-center gap-1 text-slate-200" title="Pause & Settings (Esc)">
+            <span class="text-rose-400 font-bold">[Esc]</span> Menu
+          </button>
+        </div>
+
+        <!-- Radio / Notification Toast -->
+        <div id="hud-toast" class="hud-glass rounded-xl p-2.5 border-l-4 border-l-amber-400 transition-all duration-300 max-w-sm">
+          <div class="flex items-center justify-between text-[10px] uppercase tracking-wider font-bold text-amber-400 mb-0.5">
+            <span id="toast-sender">MARCO (SAFEHOUSE COMMS)</span>
+            <span id="toast-time">LIVE</span>
+          </div>
+          <p id="toast-text" class="text-xs text-slate-200 leading-snug">Welcome to City of Chaos, Cole. Walk with WASD, press [E] near any vehicle to drive, or head to the pulsing yellow beacon to start Mission 1!</p>
+        </div>
+      </div>
+
+      <!-- Top-Right: Wanted Stars, Cash, Equipped Weapon & Ammo, Health/Armor Numeric -->
+      <div class="flex flex-col items-end gap-2">
+        <!-- Wanted Level Row -->
+        <div class="hud-glass rounded-xl px-3.5 py-2 flex flex-col items-end min-w-[190px]">
+          <div class="flex items-center gap-2">
+            <span id="wanted-status-label" class="text-[10px] font-bold uppercase tracking-wider text-slate-400">CLEAR</span>
+            <div id="wanted-stars" class="flex items-center gap-1 text-lg leading-none">
+              <span class="star-item text-slate-700">★</span>
+              <span class="star-item text-slate-700">★</span>
+              <span class="star-item text-slate-700">★</span>
+              <span class="star-item text-slate-700">★</span>
+              <span class="star-item text-slate-700">★</span>
+            </div>
+          </div>
+          <!-- Police Evasion / Search Progress Bar -->
+          <div id="search-bar-container" class="hidden w-full mt-1.5">
+            <div class="flex justify-between text-[10px] font-bold text-sky-300 mb-0.5">
+              <span id="search-bar-text">EVADING POLICE LINE OF SIGHT</span>
+              <span id="search-bar-pct">0%</span>
+            </div>
+            <div class="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+              <div id="search-bar-fill" class="h-full bg-gradient-to-r from-blue-500 to-emerald-400 transition-all duration-150" style="width: 0%;"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Cash & Time Row -->
+        <div class="hud-glass rounded-xl px-3.5 py-1.5 flex items-center gap-3">
+          <span id="hud-clock" class="text-xs font-mono text-amber-300 font-semibold">19:45</span>
+          <span class="text-slate-600">|</span>
+          <span class="font-display font-black text-base sm:text-lg text-emerald-400 tracking-tight" id="hud-cash">$2,500</span>
+        </div>
+
+        <!-- Weapon & Ammunition Card -->
+        <div class="hud-glass rounded-xl px-3.5 py-2 flex items-center gap-3 interactive-ui cursor-pointer hover:border-amber-400/40 transition" onclick="window.GameApp.cycleWeapon(1)" title="Click or press Q / 1-5 to switch weapon, R to reload">
+          <div class="text-right">
+            <div class="flex items-center justify-end gap-1.5">
+              <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-amber-400 font-bold">[Q / 1-5]</span>
+              <span id="hud-weapon-name" class="text-xs sm:text-sm font-bold text-white">9mm Pistol</span>
+            </div>
+            <div class="text-xs font-mono text-slate-300 mt-0.5">
+              <span id="hud-ammo-mag" class="text-amber-300 font-bold text-sm">15</span>
+              <span class="text-slate-500">/</span>
+              <span id="hud-ammo-reserve">120</span>
+              <span id="hud-reload-hint" class="ml-1 text-[10px] text-rose-400 font-semibold hidden">[R] RELOAD</span>
+            </div>
+          </div>
+          <div id="hud-weapon-icon" class="w-9 h-9 rounded-lg bg-slate-800/90 border border-slate-700 flex items-center justify-center text-lg">
+            🔫
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CENTER INTERACTION PROMPT (Enter Vehicle / Shop / Terminal / Mission Trigger) -->
+    <div class="flex flex-col items-center justify-center my-auto pointer-events-none">
+      <div id="interaction-prompt" class="hidden hud-glass-amber px-4 py-2 rounded-full text-xs sm:text-sm font-bold text-white flex items-center gap-2 animate-bounce">
+        <span class="px-2 py-0.5 rounded bg-amber-500 text-slate-950 font-black">E</span>
+        <span id="interaction-text">Enter Apex GT Sports Car</span>
+      </div>
+
+      <!-- Mission Banner Notification (Mission Passed / Failed / Started) -->
+      <div id="mission-splash" class="hidden hud-glass px-8 py-5 rounded-2xl border-2 border-amber-400 text-center transform transition-all">
+        <div id="mission-splash-title" class="font-display font-black text-2xl sm:text-3xl text-amber-400 tracking-wider uppercase">MISSION PASSED</div>
+        <div id="mission-splash-sub" class="text-sm sm:text-base font-semibold text-emerald-300 mt-1">+$1,500 REWARD</div>
+      </div>
+    </div>
+
+    <!-- BOTTOM BAR: Minimap + Health/Armor (Bottom-Left) | Active Mission Tracker (Center) | Speedometer / Touch Controls (Bottom-Right) -->
+    <div class="flex justify-between items-end gap-2">
+
+      <!-- Bottom-Left: Circular Radar Minimap + Health & Armor Bars -->
+      <div class="flex items-end gap-3">
+        <div class="flex flex-col items-center gap-1.5 interactive-ui">
+          <div id="minimap-wrapper" onclick="window.GameApp.toggleMap()" class="cursor-pointer" title="Click to open Full City Map (M)">
+            <canvas id="minimap-canvas" width="170" height="170"></canvas>
+            <div class="absolute top-1.5 left-1/2 -translate-x-1/2 bg-slate-950/90 px-1.5 py-0.2 rounded text-[9px] font-black text-amber-400 border border-slate-700">N</div>
+          </div>
+          <!-- Health & Armor Bars -->
+          <div class="hud-glass rounded-lg px-2.5 py-1.5 w-44 flex flex-col gap-1">
+            <div class="flex items-center gap-2">
+              <span class="text-[10px] font-bold text-emerald-400 w-10">HP</span>
+              <div class="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
+                <div id="hud-hp-bar" class="h-full bg-emerald-500 transition-all duration-150" style="width: 100%;"></div>
+              </div>
+              <span id="hud-hp-val" class="text-[10px] font-mono text-slate-300 w-7 text-right">100</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-[10px] font-bold text-sky-400 w-10">ARM</span>
+              <div class="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
+                <div id="hud-armor-bar" class="h-full bg-sky-500 transition-all duration-150" style="width: 50%;"></div>
+              </div>
+              <span id="hud-armor-val" class="text-[10px] font-mono text-slate-300 w-7 text-right">50</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Compact Controls Legend (Desktop) -->
+        <div class="hidden xl:flex flex-col gap-1 hud-glass rounded-xl p-2.5 text-[11px] text-slate-300">
+          <div class="font-bold text-amber-400 uppercase tracking-wider text-[10px] mb-0.5">Controls</div>
+          <div><b class="text-white">WASD</b> Move / Drive &bull; <b class="text-white">Shift</b> Sprint</div>
+          <div><b class="text-white">Space</b> Jump / Drift &bull; <b class="text-white">C</b> Crouch</div>
+          <div><b class="text-white">E</b> Vehicle / Shop &bull; <b class="text-white">F</b> Melee</div>
+          <div><b class="text-white">LMB</b> Shoot &bull; <b class="text-white">R</b> Reload &bull; <b class="text-white">H</b> Horn</div>
+        </div>
+      </div>
+
+      <!-- Bottom-Center: Active Mission Objective Card -->
+      <div class="flex-1 max-w-md mx-auto">
+        <div class="hud-glass rounded-xl px-4 py-2.5 border-t-2 border-t-amber-400 interactive-ui">
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2">
+              <span class="px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300 font-display font-bold text-[10px]" id="hud-mission-tag">MISSION 1/6</span>
+              <span class="font-bold text-xs sm:text-sm text-white truncate" id="hud-mission-title">First Ride</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span id="hud-waypoint-dist" class="text-xs font-mono font-bold text-amber-400">85m</span>
+              <button id="btn-mission-action" onclick="window.GameApp.triggerMissionShortcut()" class="px-2 py-0.5 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-[10px] transition">
+                Locate
+              </button>
+            </div>
+          </div>
+          <p id="hud-mission-obj" class="text-xs text-slate-300 mt-1 leading-snug">
+            Approach any parked or moving vehicle and press <b class="text-amber-300">[E]</b> to commandeer it, then drive to Marco's Garage.
+          </p>
+          <!-- Extra Mission Bar (Race position / Upload progress / Timer) -->
+          <div id="mission-extra-bar" class="hidden mt-1.5 pt-1.5 border-t border-slate-800 flex items-center justify-between text-[11px] font-semibold text-cyan-300">
+            <span id="mission-extra-left">STAGE PROGRESS</span>
+            <span id="mission-extra-right">0%</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bottom-Right: Digital Vehicle Speedometer (when driving) + On-Screen Action Pad -->
+      <div class="flex flex-col items-end gap-2">
+        <!-- Speedometer Card -->
+        <div id="hud-speedometer" class="hidden hud-glass rounded-2xl p-3 min-w-[175px] border-r-4 border-r-cyan-400">
+          <div class="flex justify-between items-center text-[10px] font-bold uppercase tracking-wider text-slate-400">
+            <span id="speedo-veh-name" class="text-cyan-300 truncate max-w-[115px]">Apex GT</span>
+            <span id="speedo-gear" class="px-1.5 py-0.2 rounded bg-slate-800 text-amber-400 font-mono">D1</span>
+          </div>
+          <div class="flex items-baseline justify-end gap-1.5 my-0.5">
+            <span id="speedo-mph" class="font-display font-black text-3xl text-white tracking-tight">0</span>
+            <span class="text-[11px] font-bold text-slate-400">MPH</span>
+          </div>
+          <!-- RPM Bar -->
+          <div class="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden mb-1.5">
+            <div id="speedo-rpm" class="h-full bg-gradient-to-r from-cyan-400 via-amber-400 to-rose-500 transition-all duration-75" style="width: 15%;"></div>
+          </div>
+          <!-- Vehicle Health -->
+          <div class="flex items-center justify-between text-[10px] text-slate-400">
+            <span>CHASSIS</span>
+            <span id="speedo-hp-text" class="text-emerald-400 font-mono font-bold">100%</span>
+          </div>
+        </div>
+
+        <!-- Quick On-Screen Action Buttons (Works for both Mouse & Touch users) -->
+        <div class="flex flex-wrap justify-end gap-1.5 interactive-ui">
+          <button id="btn-act-enter" onclick="window.GameApp.handleInteract()" class="hud-glass hover:bg-amber-500/20 active:scale-95 px-3 py-1.5 rounded-lg text-xs font-bold text-amber-300 border border-amber-500/30">
+            [E] Enter / Use
+          </button>
+          <button id="btn-act-shoot" onclick="window.GameApp.triggerPrimaryAttack()" class="hud-glass hover:bg-rose-500/20 active:scale-95 px-3 py-1.5 rounded-lg text-xs font-bold text-rose-300 border border-rose-500/30">
+            [LMB] Fire
+          </button>
+          <button id="btn-act-melee" onclick="window.GameApp.triggerMelee()" class="hud-glass hover:bg-slate-700 active:scale-95 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-200">
+            [F] Melee
+          </button>
+          <button id="btn-act-crouch" onclick="window.GameApp.toggleCrouch()" class="hud-glass hover:bg-slate-700 active:scale-95 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-200">
+            [C] Crouch
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- IN-GAME SMARTPHONE DRAWER (Toggle with N or Phone button)             -->
+  <!-- ===================================================================== -->
+  <div id="phone-drawer" class="hidden fixed bottom-20 right-4 z-30 w-72 rounded-3xl hud-glass border-2 border-slate-700 overflow-hidden shadow-2xl interactive-ui">
+    <!-- Phone Top Status Bar -->
+    <div class="bg-slate-900/95 px-4 py-2 flex justify-between items-center text-[10px] font-semibold text-slate-400 border-b border-slate-800">
+      <span>CHAOS-NET 5G</span>
+      <span id="phone-clock">19:45</span>
+      <button id="btn-close-phone" onclick="window.GameApp.togglePhone()" class="text-slate-400 hover:text-white font-bold">✕</button>
+    </div>
+    <div class="p-3.5 max-h-[410px] overflow-y-auto space-y-3">
+      <div class="text-xs font-display font-bold text-amber-400 uppercase tracking-wider">Story Missions (Dispatch)</div>
+      <div id="phone-missions-list" class="space-y-1.5"></div>
+
+      <div class="text-xs font-display font-bold text-cyan-400 uppercase tracking-wider pt-1">Contacts &amp; Quick Services</div>
+      <div class="grid grid-cols-1 gap-1.5 text-xs">
+        <button id="btn-phone-mechanic" onclick="window.GameApp.phoneService('mechanic')" class="w-full text-left p-2 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 flex items-center justify-between transition">
+          <span>🔧 <b>Marco (Mechanic)</b><br><span class="text-[10px] text-slate-400">Deliver Sports Car ($300)</span></span>
+          <span class="text-emerald-400 font-bold">$300</span>
+        </button>
+        <button id="btn-phone-fixer" onclick="window.GameApp.phoneService('clearheat')" class="w-full text-left p-2 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 flex items-center justify-between transition">
+          <span>🕵️ <b>Elena (Police Bribe)</b><br><span class="text-[10px] text-slate-400">Clear Wanted Stars</span></span>
+          <span class="text-emerald-400 font-bold">$800</span>
+        </button>
+        <button id="btn-phone-ammo" onclick="window.GameApp.phoneService('supply')" class="w-full text-left p-2 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 flex items-center justify-between transition">
+          <span>📦 <b>Arms Drop</b><br><span class="text-[10px] text-slate-400">Full Health, Armor &amp; Ammo</span></span>
+          <span class="text-emerald-400 font-bold">$500</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- FULL-SCREEN INTERACTIVE CITY MAP MODAL (Toggle with M)                -->
+  <!-- ===================================================================== -->
+  <div id="map-modal" class="hidden fixed inset-0 z-40 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 interactive-ui">
+    <div class="hud-glass rounded-2xl max-w-4xl w-full p-4 sm:p-6 border border-slate-700 flex flex-col gap-4 max-h-[92vh]">
+      <div class="flex flex-wrap justify-between items-center gap-2 border-b border-slate-800 pb-3">
+        <div>
+          <h2 class="font-display font-black text-xl text-amber-400">CITY OF CHAOS — SATELLITE GPS MAP</h2>
+          <p class="text-xs text-slate-400">Click anywhere on the map to set a custom GPS Waypoint, or click a landmark below to fast-navigate.</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="btn-clear-waypoint" onclick="window.GameApp.clearCustomWaypoint()" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200">
+            Reset to Mission Waypoint
+          </button>
+          <button id="btn-close-map" onclick="window.GameApp.toggleMap()" class="px-3.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-xs font-bold text-white">
+            Close [M]
+          </button>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 items-center overflow-y-auto">
+        <div class="lg:col-span-2 flex justify-center">
+          <canvas id="fullmap-canvas" width="520" height="520" class="rounded-xl border-2 border-slate-700 cursor-crosshair max-w-full h-auto bg-slate-950"></canvas>
+        </div>
+        <div class="space-y-3 text-xs">
+          <div class="font-bold text-amber-400 uppercase tracking-wider">Map Legend &amp; Fast GPS</div>
+          <div class="space-y-1.5">
+            <button id="btn-gps-safehouse" onclick="window.GameApp.setBookmarkWaypoint(-60, -60, 'Vance Safehouse & Garage')" class="w-full text-left p-2 rounded-lg bg-slate-900/90 hover:bg-slate-800 flex items-center justify-between">
+              <span>🏠 <b>Vance Safehouse &amp; Garage</b></span>
+              <span class="text-emerald-400">Set GPS</span>
+            </button>
+            <button id="btn-gps-customs" onclick="window.GameApp.setBookmarkWaypoint(60, -60, 'Auto Customs & Dealership')" class="w-full text-left p-2 rounded-lg bg-slate-900/90 hover:bg-slate-800 flex items-center justify-between">
+              <span>🏎️ <b>Auto Customs &amp; Garage</b></span>
+              <span class="text-cyan-400">Set GPS</span>
+            </button>
+            <button id="btn-gps-store" onclick="window.GameApp.setBookmarkWaypoint(-60, 60, '24/7 Store & Armory')" class="w-full text-left p-2 rounded-lg bg-slate-900/90 hover:bg-slate-800 flex items-center justify-between">
+              <span>🔫 <b>24/7 Store &amp; Armory</b></span>
+              <span class="text-amber-400">Set GPS</span>
+            </button>
+            <button id="btn-gps-clothing" onclick="window.GameApp.setBookmarkWaypoint(60, 60, 'Metro Threads Clothing')" class="w-full text-left p-2 rounded-lg bg-slate-900/90 hover:bg-slate-800 flex items-center justify-between">
+              <span>🧥 <b>Metro Threads Clothing</b></span>
+              <span class="text-purple-400">Set GPS</span>
+            </button>
+            <button id="btn-gps-warehouse" onclick="window.GameApp.setBookmarkWaypoint(300, 180, 'Syndicate Warehouse')" class="w-full text-left p-2 rounded-lg bg-slate-900/90 hover:bg-slate-800 flex items-center justify-between">
+              <span>🏭 <b>Syndicate Warehouse (Ind.)</b></span>
+              <span class="text-rose-400">Set GPS</span>
+            </button>
+            <button id="btn-gps-beach" onclick="window.GameApp.setBookmarkWaypoint(-450, 0, 'Sunset Beach & Pier')" class="w-full text-left p-2 rounded-lg bg-slate-900/90 hover:bg-slate-800 flex items-center justify-between">
+              <span>🏖️ <b>Sunset Beach &amp; Helipad</b></span>
+              <span class="text-sky-400">Set GPS</span>
+            </button>
+          </div>
+          <div class="p-3 rounded-xl bg-slate-900/70 border border-slate-800 space-y-1 text-[11px] text-slate-400">
+            <div><span class="inline-block w-2.5 h-2.5 rounded-full bg-white mr-1.5"></span> Player Position &amp; Heading</div>
+            <div><span class="inline-block w-2.5 h-2.5 rounded-full bg-amber-400 mr-1.5"></span> Active Mission Beacon</div>
+            <div><span class="inline-block w-2.5 h-2.5 rounded-full bg-fuchsia-400 mr-1.5"></span> Custom GPS Waypoint</div>
+            <div><span class="inline-block w-2.5 h-2.5 rounded-full bg-red-500 mr-1.5"></span> Police / Hostile Units</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- CHARACTER, INVENTORY, SHOPS & GARAGE HUB MODAL (Toggle with Tab)      -->
+  <!-- ===================================================================== -->
+  <div id="inventory-modal" class="hidden fixed inset-0 z-40 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 interactive-ui">
+    <div class="hud-glass rounded-2xl max-w-4xl w-full p-4 sm:p-6 border border-slate-700 flex flex-col gap-4 max-h-[92vh] overflow-y-auto">
+      <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+        <div>
+          <h2 class="font-display font-black text-xl text-cyan-400">CHARACTER, ARMORY, SHOPS &amp; GARAGE</h2>
+          <p class="text-xs text-slate-400">Equip weapons, buy ammo &amp; armor, customize vehicles, or change outfits. Progress auto-saves to browser storage.</p>
+        </div>
+        <button id="btn-close-inv" onclick="window.GameApp.toggleInventory()" class="px-3.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-xs font-bold text-white">
+          Close [Tab]
+        </button>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <!-- Column 1: Weapons & Armory -->
+        <div class="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 space-y-2.5">
+          <div class="font-display font-bold text-sm text-amber-400">1. WEAPONS &amp; AMMO</div>
+          <div id="inv-weapons-list" class="space-y-2 text-xs"></div>
+          <div class="pt-2 border-t border-slate-800 space-y-1.5 text-xs">
+            <button id="btn-buy-snack" onclick="window.GameApp.buyShopItem('heal')" class="w-full p-2 rounded-lg bg-emerald-950/60 hover:bg-emerald-900/70 border border-emerald-600/40 flex justify-between items-center">
+              <span>🥤 Energy Pack (+50 HP)</span>
+              <span class="font-bold text-emerald-400">$100</span>
+            </button>
+            <button id="btn-buy-armor" onclick="window.GameApp.buyShopItem('armor')" class="w-full p-2 rounded-lg bg-sky-950/60 hover:bg-sky-900/70 border border-sky-600/40 flex justify-between items-center">
+              <span>🛡️ Heavy Kevlar (100 ARM)</span>
+              <span class="font-bold text-sky-400">$250</span>
+            </button>
+            <button id="btn-buy-allammo" onclick="window.GameApp.buyShopItem('ammo')" class="w-full p-2 rounded-lg bg-amber-950/60 hover:bg-amber-900/70 border border-amber-600/40 flex justify-between items-center">
+              <span>弹 Full Ammo Crate</span>
+              <span class="font-bold text-amber-400">$200</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Column 2: Garage, Vehicle Dealership & Customization -->
+        <div class="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 space-y-2.5">
+          <div class="font-display font-bold text-sm text-cyan-400">2. GARAGE &amp; AUTO CUSTOMS</div>
+          <div id="inv-vehicles-list" class="space-y-1.5 text-xs"></div>
+          <div class="pt-2 border-t border-slate-800 space-y-2 text-xs">
+            <div class="text-[11px] font-semibold text-slate-400">Custom Metallic Paint (Current/Garage Car):</div>
+            <div class="flex flex-wrap gap-1.5" id="paint-swatches">
+              <button id="btn-paint-0" onclick="window.GameApp.applyVehiclePaint('#ef4444')" class="w-6 h-6 rounded-full bg-red-500 border-2 border-white/40" title="Crimson Red"></button>
+              <button id="btn-paint-1" onclick="window.GameApp.applyVehiclePaint('#3b82f6')" class="w-6 h-6 rounded-full bg-blue-500 border-2 border-white/40" title="Cobalt Blue"></button>
+              <button id="btn-paint-2" onclick="window.GameApp.applyVehiclePaint('#f59e0b')" class="w-6 h-6 rounded-full bg-amber-500 border-2 border-white/40" title="Sunset Gold"></button>
+              <button id="btn-paint-3" onclick="window.GameApp.applyVehiclePaint('#10b981')" class="w-6 h-6 rounded-full bg-emerald-500 border-2 border-white/40" title="Neon Emerald"></button>
+              <button id="btn-paint-4" onclick="window.GameApp.applyVehiclePaint('#a855f7')" class="w-6 h-6 rounded-full bg-purple-500 border-2 border-white/40" title="Vice Purple"></button>
+              <button id="btn-paint-5" onclick="window.GameApp.applyVehiclePaint('#f8fafc')" class="w-6 h-6 rounded-full bg-slate-100 border-2 border-white/40" title="Pearl White"></button>
+              <button id="btn-paint-6" onclick="window.GameApp.applyVehiclePaint('#1e293b')" class="w-6 h-6 rounded-full bg-slate-800 border-2 border-white/40" title="Stealth Matte"></button>
+            </div>
+            <button id="btn-upgrade-engine" onclick="window.GameApp.buyVehicleUpgrade('engine')" class="w-full p-2 rounded-lg bg-cyan-950/60 hover:bg-cyan-900/70 border border-cyan-500/40 flex justify-between items-center">
+              <span>⚡ Stage-2 Turbo Tuning</span>
+              <span id="upgrade-engine-cost" class="font-bold text-cyan-300">$600</span>
+            </button>
+            <button id="btn-repair-car" onclick="window.GameApp.buyVehicleUpgrade('repair')" class="w-full p-2 rounded-lg bg-slate-800 hover:bg-slate-700 flex justify-between items-center">
+              <span>🔧 Full Chassis Repair &amp; Store</span>
+              <span class="font-bold text-emerald-400">$150</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Column 3: Outfits, Safehouse & Career Stats -->
+        <div class="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 space-y-2.5">
+          <div class="font-display font-bold text-sm text-purple-400">3. METRO THREADS &amp; CAREER</div>
+          <div id="inv-outfits-list" class="space-y-1.5 text-xs"></div>
+          <div class="pt-2 border-t border-slate-800 space-y-1.5 text-xs text-slate-300">
+            <div class="font-bold text-slate-400 uppercase text-[10px]">Player Progression</div>
+            <div class="flex justify-between"><span>Missions Completed:</span><span id="stat-missions" class="font-bold text-amber-400">0 / 6</span></div>
+            <div class="flex justify-between"><span>Vehicles Stored:</span><span id="stat-vehicles" class="font-bold text-cyan-400">1 / 7</span></div>
+            <div class="flex justify-between"><span>Engine Tuning Level:</span><span id="stat-tuning" class="font-bold text-emerald-400">Lv. 1</span></div>
+            <div class="pt-2 flex gap-2">
+              <button id="btn-save-game" onclick="window.GameApp.saveGameManual()" class="flex-1 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold">
+                💾 Save Game
+              </button>
+              <button id="btn-reset-save" onclick="window.GameApp.resetSaveData()" class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-rose-900 text-slate-300 font-semibold">
+                Reset
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- PAUSE & SETTINGS MODAL (Toggle with Esc)                              -->
+  <!-- ===================================================================== -->
+  <div id="pause-modal" class="hidden fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 interactive-ui">
+    <div class="hud-glass rounded-2xl max-w-lg w-full p-6 border border-slate-700 space-y-4">
+      <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+        <div>
+          <h2 class="font-display font-black text-2xl text-amber-400">GAME PAUSED</h2>
+          <p class="text-xs text-slate-400">CITY OF CHAOS — Open-World Sandbox &amp; Story Mode</p>
+        </div>
+        <button id="btn-resume-top" onclick="window.GameApp.togglePause()" class="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white">
+          Resume
+        </button>
+      </div>
+
+      <!-- Settings Controls -->
+      <div class="space-y-3 text-xs">
+        <div class="flex items-center justify-between p-2.5 rounded-xl bg-slate-900/80">
+          <span><b>Time &amp; Weather Preset</b></span>
+          <div class="flex gap-1.5">
+            <button id="btn-env-sunset" onclick="window.GameApp.setEnvironment('sunset')" class="px-2.5 py-1 rounded bg-amber-600/30 border border-amber-500 text-amber-200 font-semibold">Sunset</button>
+            <button id="btn-env-night" onclick="window.GameApp.setEnvironment('night')" class="px-2.5 py-1 rounded bg-indigo-600/30 border border-indigo-500 text-indigo-200 font-semibold">Night</button>
+            <button id="btn-env-rain" onclick="window.GameApp.setEnvironment('rain')" class="px-2.5 py-1 rounded bg-sky-600/30 border border-sky-500 text-sky-200 font-semibold">Rain</button>
+            <button id="btn-env-day" onclick="window.GameApp.setEnvironment('day')" class="px-2.5 py-1 rounded bg-emerald-600/30 border border-emerald-500 text-emerald-200 font-semibold">Day</button>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between p-2.5 rounded-xl bg-slate-900/80">
+          <span><b>Mouse Camera Sensitivity</b></span>
+          <input id="input-sens" type="range" min="1" max="10" value="5" onchange="window.GameApp.updateSensitivity(this.value)" class="w-32 accent-amber-500" />
+        </div>
+
+        <div class="flex items-center justify-between p-2.5 rounded-xl bg-slate-900/80">
+          <span><b>Synthesized Web Audio</b></span>
+          <button id="btn-pause-audio" onclick="window.GameApp.toggleAudioMute()" class="px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 font-semibold text-emerald-400">
+            Active
+          </button>
+        </div>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="grid grid-cols-2 gap-2.5 pt-2">
+        <button id="btn-pause-resume" onclick="window.GameApp.togglePause()" class="py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-display font-black text-sm">
+          RESUME GAME
+        </button>
+        <button id="btn-pause-restart" onclick="window.GameApp.restartCurrentMission()" class="py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs">
+          Restart Mission / Respawn
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- WASTED / BUSTED OVERLAY                                               -->
+  <!-- ===================================================================== -->
+  <div id="wasted-overlay" class="hidden fixed inset-0 z-50 bg-red-950/75 backdrop-blur-md flex flex-col items-center justify-center pointer-events-none">
+    <h1 id="wasted-title" class="font-display font-black text-6xl sm:text-7xl tracking-widest text-red-500 drop-shadow-[0_5px_25px_rgba(239,68,68,0.9)]">WASTED</h1>
+    <p id="wasted-sub" class="text-sm sm:text-base font-semibold text-slate-200 mt-2">Emergency Medical Evac to Metro Central Hospital...</p>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- COMPLETE MODULAR GAME ENGINE SCRIPT                                   -->
+  <!-- ===================================================================== -->
+  <script>
+  (function() {
+    'use strict';
+
+    // =========================================================================
+    // 1. SYNTHESIZED WEB AUDIO ENGINE (Engines, Sirens, Gunshots, Footsteps)
+    // =========================================================================
+    class SoundEngine {
+      constructor() {
+        this.ctx = null;
+        this.muted = false;
+        this.engineOsc = null;
+        this.engineGain = null;
+        this.sirenOsc = null;
+        this.sirenGain = null;
+        this.sirenPhase = 0;
+      }
+
+      init() {
+        if (this.ctx) {
+          if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
+          return;
+        }
+        try {
+          const AudioCtx = window.AudioContext || window.webkitAudioContext;
+          if (!AudioCtx) return;
+          this.ctx = new AudioCtx();
+
+          // Continuous Vehicle Engine Oscillator
+          this.engineOsc = this.ctx.createOscillator();
+          this.engineOsc.type = 'sawtooth';
+          this.engineOsc.frequency.value = 55;
+          const filter = this.ctx.createBiquadFilter();
+          filter.type = 'lowpass';
+          filter.frequency.value = 260;
+          this.engineGain = this.ctx.createGain();
+          this.engineGain.gain.value = 0.0;
+          this.engineOsc.connect(filter);
+          filter.connect(this.engineGain);
+          this.engineGain.connect(this.ctx.destination);
+          this.engineOsc.start();
+
+          // Continuous Police Siren Oscillator
+          this.sirenOsc = this.ctx.createOscillator();
+          this.sirenOsc.type = 'triangle';
+          this.sirenOsc.frequency.value = 650;
+          this.sirenGain = this.ctx.createGain();
+          this.sirenGain.gain.value = 0.0;
+          this.sirenOsc.connect(this.sirenGain);
+          this.sirenGain.connect(this.ctx.destination);
+          this.sirenOsc.start();
+        } catch (e) {}
+      }
+
+      updateContinuous(dt, isDriving, speedRatio, baseFreq, policeDist, isPursuit) {
+        if (!this.ctx || this.muted) {
+          if (this.engineGain) this.engineGain.gain.value = 0;
+          if (this.sirenGain) this.sirenGain.gain.value = 0;
+          return;
+        }
+        if (isDriving && this.engineOsc && this.engineGain) {
+          const targetFreq = (baseFreq || 52) + Math.abs(speedRatio) * 125 + ((Math.abs(speedRatio) * 40) % 22);
+          this.engineOsc.frequency.setTargetAtTime(targetFreq, this.ctx.currentTime, 0.05);
+          this.engineGain.gain.setTargetAtTime(0.055, this.ctx.currentTime, 0.08);
+        } else if (this.engineGain) {
+          this.engineGain.gain.setTargetAtTime(0.0, this.ctx.currentTime, 0.08);
+        }
+
+        if (isPursuit && policeDist < 190 && this.sirenOsc && this.sirenGain) {
+          this.sirenPhase += dt * 4.5;
+          const freq = 680 + Math.sin(this.sirenPhase) * 240;
+          const vol = Math.max(0, (1 - policeDist / 190)) * 0.045;
+          this.sirenOsc.frequency.setTargetAtTime(freq, this.ctx.currentTime, 0.04);
+          this.sirenGain.gain.setTargetAtTime(vol, this.ctx.currentTime, 0.06);
+        } else if (this.sirenGain) {
+          this.sirenGain.gain.setTargetAtTime(0.0, this.ctx.currentTime, 0.08);
+        }
+      }
+
+      playTone(freq, endFreq, duration, type, vol) {
+        if (this.muted) return;
+        this.init();
+        if (!this.ctx) return;
+        try {
+          const now = this.ctx.currentTime;
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = type || 'sine';
+          osc.frequency.setValueAtTime(freq, now);
+          if (endFreq) osc.frequency.exponentialRampToValueAtTime(Math.max(20, endFreq), now + duration);
+          gain.gain.setValueAtTime(vol || 0.08, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start(now);
+          osc.stop(now + duration);
+        } catch (e) {}
+      }
+
+      playNoise(duration, filterFreq, vol) {
+        if (this.muted) return;
+        this.init();
+        if (!this.ctx) return;
+        try {
+          const now = this.ctx.currentTime;
+          const bufSize = Math.floor(this.ctx.sampleRate * duration);
+          const buffer = this.ctx.createBuffer(1, bufSize, this.ctx.sampleRate);
+          const data = buffer.getChannelData(0);
+          for (let i = 0; i < bufSize; i++) {
+            data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufSize * 0.45));
+          }
+          const src = this.ctx.createBufferSource();
+          src.buffer = buffer;
+          const filter = this.ctx.createBiquadFilter();
+          filter.type = 'bandpass';
+          filter.frequency.value = filterFreq || 900;
+          const gain = this.ctx.createGain();
+          gain.gain.setValueAtTime(vol || 0.12, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+          src.connect(filter);
+          filter.connect(gain);
+          gain.connect(this.ctx.destination);
+          src.start(now);
+        } catch (e) {}
+      }
+
+      shoot(weaponId) {
+        if (weaponId === 'pistol') {
+          this.playNoise(0.14, 1100, 0.16);
+          this.playTone(260, 55, 0.11, 'sawtooth', 0.1);
+        } else if (weaponId === 'smg') {
+          this.playNoise(0.09, 1400, 0.13);
+          this.playTone(320, 80, 0.08, 'square', 0.08);
+        } else if (weaponId === 'shotgun') {
+          this.playNoise(0.26, 650, 0.24);
+          this.playTone(150, 35, 0.22, 'sawtooth', 0.16);
+        } else if (weaponId === 'rifle') {
+          this.playNoise(0.16, 950, 0.20);
+          this.playTone(220, 45, 0.15, 'sawtooth', 0.13);
+        } else {
+          this.playNoise(0.08, 400, 0.12);
+          this.playTone(140, 48, 0.09, 'triangle', 0.1);
+        }
+      }
+
+      footstep() { this.playNoise(0.045, 500, 0.035); }
+      skid() { this.playNoise(0.12, 1850, 0.045); }
+      horn() { this.playTone(410, 405, 0.28, 'sawtooth', 0.09); }
+      crash() { this.playNoise(0.28, 380, 0.18); }
+      reload() {
+        this.playTone(580, 820, 0.07, 'triangle', 0.07);
+        setTimeout(() => this.playTone(720, 960, 0.08, 'triangle', 0.08), 160);
+      }
+      cash() {
+        this.playTone(880, 1320, 0.12, 'sine', 0.09);
+        setTimeout(() => this.playTone(1320, 1760, 0.18, 'sine', 0.09), 110);
+      }
+      fail() {
+        this.playTone(300, 140, 0.35, 'sawtooth', 0.12);
+      }
+    }
+
+    const SFX = new SoundEngine();
+
+    // =========================================================================
+    // 2. GAME CONFIGURATION, WEAPONS, VEHICLES, OUTFITS & MISSIONS DATA
+    // =========================================================================
+    const WEAPONS_DATA = [
+      { id: 'fists', name: 'Street Melee', icon: '👊', damage: 28, range: 3.4, fireRate: 0.38, magSize: 999, reserveMax: 999, spread: 0, pellets: 1, price: 0, owned: true },
+      { id: 'pistol', name: '9mm Tactical', icon: '🔫', damage: 34, range: 95, fireRate: 0.24, magSize: 15, reserveMax: 150, spread: 0.015, pellets: 1, price: 0, owned: true },
+      { id: 'smg', name: 'Viper SMG', icon: '⚡', damage: 22, range: 80, fireRate: 0.095, magSize: 30, reserveMax: 270, spread: 0.035, pellets: 1, price: 650, owned: false },
+      { id: 'shotgun', name: 'Enforcer 12G', icon: '💥', damage: 24, range: 45, fireRate: 0.68, magSize: 8, reserveMax: 64, spread: 0.085, pellets: 6, price: 1100, owned: false },
+      { id: 'rifle', name: 'Phantom AR', icon: '🎯', damage: 42, range: 135, fireRate: 0.13, magSize: 30, reserveMax: 240, spread: 0.018, pellets: 1, price: 1800, owned: false }
+    ];
+
+    const VEHICLE_CLASSES = {
+      sports: { id: 'sports', name: 'Apex GT Sports', price: 2200, maxSpeed: 64, accel: 38, brake: 46, turnSpeed: 2.35, grip: 0.92, maxHp: 140, w: 2.3, h: 1.25, l: 4.7, freq: 68, color: '#ef4444' },
+      sedan:  { id: 'sedan',  name: 'Crown V8 Sedan', price: 900,  maxSpeed: 46, accel: 25, brake: 36, turnSpeed: 2.05, grip: 0.88, maxHp: 160, w: 2.3, h: 1.45, l: 4.8, freq: 52, color: '#3b82f6' },
+      suv:    { id: 'suv',    name: 'Titan XL SUV',   price: 1500, maxSpeed: 44, accel: 24, brake: 34, turnSpeed: 1.85, grip: 0.86, maxHp: 240, w: 2.5, h: 1.85, l: 5.1, freq: 46, color: '#10b981' },
+      moto:   { id: 'moto',   name: 'Vortex 900 Bike',price: 1200, maxSpeed: 68, accel: 45, brake: 50, turnSpeed: 2.85, grip: 0.94, maxHp: 95,  w: 1.0, h: 1.2,  l: 2.5, freq: 88, color: '#f59e0b' },
+      truck:  { id: 'truck',  name: 'Colossus Hauler',price: 1800, maxSpeed: 37, accel: 19, brake: 28, turnSpeed: 1.50, grip: 0.82, maxHp: 340, w: 2.8, h: 2.6,  l: 6.8, freq: 38, color: '#a855f7' },
+      bus:    { id: 'bus',    name: 'Metro City Bus', price: 2000, maxSpeed: 34, accel: 17, brake: 26, turnSpeed: 1.40, grip: 0.80, maxHp: 380, w: 2.9, h: 2.8,  l: 8.4, freq: 34, color: '#0284c7' },
+      police: { id: 'police', name: 'PD Interceptor', price: 3000, maxSpeed: 60, accel: 35, brake: 44, turnSpeed: 2.25, grip: 0.90, maxHp: 200, w: 2.35,h: 1.45, l: 4.9, freq: 62, color: '#111827' }
+    };
+
+    const OUTFITS = [
+      { id: 'racer', name: 'Street Racer Jacket', shirt: 0xdc2626, pants: 0x1e293b, price: 0, owned: true },
+      { id: 'stealth', name: 'Tactical Night Ops', shirt: 0x0f172a, pants: 0x090d16, price: 400, owned: false },
+      { id: 'vice', name: 'Sunset Neon Suit', shirt: 0x06b6d4, pants: 0xf8fafc, price: 650, owned: false },
+      { id: 'exec', name: 'Syndicate Executive', shirt: 0x7c3aed, pants: 0x111827, price: 900, owned: false },
+      { id: 'biker', name: 'Gold Hazard Leather', shirt: 0xd97706, pants: 0x1c1917, price: 1200, owned: false }
+    ];
+
+    const MISSIONS = [
+      {
+        id: 1,
+        title: 'Mission 1: First Ride',
+        reward: 1500,
+        startPos: { x: -22, z: -22 },
+        briefing: 'MARCO: "Cole! The Syndicate impounded your ride. Grab any car on the street [E] and bring it to Auto Customs Garage so we can set you up."',
+        stages: [
+          { type: 'enter_car', text: 'Approach any parked or traffic vehicle and press [E] to commandeer it.' },
+          { type: 'goto', target: { x: 60, z: -38 }, radius: 11, requireVehicle: true, text: 'Drive the vehicle to Marco at Auto Customs Garage in Downtown.' }
+        ]
+      },
+      {
+        id: 2,
+        title: 'Mission 2: The Delivery',
+        reward: 2500,
+        startPos: { x: 60, z: -34 },
+        briefing: 'MARCO: "A client needs this loaded Sedan moved to the Industrial Docks. Keep a low profile—you CANNOT complete the drop while Wanted by Police!"',
+        stages: [
+          { type: 'goto', target: { x: -120, z: -42 }, radius: 10, requireVehicle: false, text: 'Pick up the marked Courier Vehicle parked in West Downtown.' },
+          { type: 'delivery', target: { x: 240, z: -120 }, radius: 12, text: 'Drive across the bridge to the Harbor Drop-Off. Avoid police attention (0 Wanted Stars & >25% Car HP required)!' }
+        ]
+      },
+      {
+        id: 3,
+        title: 'Mission 3: Street Race',
+        reward: 4000,
+        startPos: { x: -120, z: 0 },
+        briefing: 'ELENA: "Three Syndicate street racers think they own Sunset Blvd. Bring a fast car to the starting grid and beat them through all 6 checkpoints!"',
+        stages: [
+          {
+            type: 'race',
+            checkpoints: [
+              { x: -240, z: 0 },
+              { x: -360, z: 120 },
+              { x: -240, z: 240 },
+              { x: 0, z: 240 },
+              { x: 120, z: 0 },
+              { x: 0, z: -120 }
+            ],
+            text: 'Race against the AI opponents through all 6 Checkpoints and finish 1st!'
+          }
+        ]
+      },
+      {
+        id: 4,
+        title: 'Mission 4: Getaway',
+        reward: 5000,
+        startPos: { x: 0, z: -115 },
+        briefing: 'ELENA: "It’s a trap! Captain Cross just put an APB out on your plates! Break line-of-sight, lose the 3-Star Police Pursuit, and get back to the Safehouse!"',
+        stages: [
+          { type: 'evade_police', stars: 3, text: 'Escape the 3-Star Police Pursuit! Outrun the cruisers and break line-of-sight until your Wanted level clears.' },
+          { type: 'goto', target: { x: -60, z: -38 }, radius: 10, requireVehicle: false, text: 'Return safely to Vance Safehouse & Garage.' }
+        ]
+      },
+      {
+        id: 5,
+        title: 'Mission 5: The Warehouse',
+        reward: 6500,
+        startPos: { x: -60, z: -34 },
+        briefing: 'ELENA: "Cross’s ledger is stored on an encrypted Data Drive inside the guarded Syndicate Warehouse across the bridge. Infiltrate the interior and grab it!"',
+        stages: [
+          { type: 'goto', target: { x: 268, z: 180 }, radius: 14, requireVehicle: false, text: 'Travel across the bridge to the Syndicate Warehouse compound in the Industrial Zone.' },
+          { type: 'steal_drive', target: { x: 306, z: 180 }, radius: 5, text: 'Fight or sneak past the Syndicate guards, walk inside the Warehouse interior, and press [E] to steal the Data Drive.' },
+          { type: 'goto', target: { x: 185, z: 0 }, radius: 16, requireVehicle: false, text: 'Exfiltrate with the Data Drive across the Main Suspension Bridge!' }
+        ]
+      },
+      {
+        id: 6,
+        title: 'Mission 6: Final Escape',
+        reward: 15000,
+        startPos: { x: 145, z: 0 },
+        briefing: 'ELENA: "This is it! Upload the Data Drive at the Downtown Broadcast Tower, then survive Cross’s 4-Star lockdown and reach the Extraction Chopper on Sunset Pier!"',
+        stages: [
+          { type: 'upload_hold', target: { x: 0, z: 120 }, radius: 14, duration: 12, text: 'Hold position near the Downtown Broadcast Tower (0, 120) to transmit the corruption files!' },
+          { type: 'final_escape', target: { x: -485, z: 0 }, radius: 14, text: '4-STAR LOCKDOWN! Drive West to the Sunset Pier Helipad (-485, 0) for final extraction!' }
+        ]
+      }
+    ];
+
+    // =========================================================================
+    // 3. CENTRAL GAME STATE
+    // =========================================================================
+    const STATE = {
+      paused: false,
+      mapOpen: false,
+      invOpen: false,
+      phoneOpen: false,
+      wasted: false,
+      timeOfDay: 19.75, // Starts at golden sunset (19:45)
+      envPreset: 'sunset', // 'sunset' | 'night' | 'rain' | 'day'
+      isRaining: false,
+      mouseSens: 0.0026,
+
+      cash: 2500,
+      wantedLevel: 0,
+      wantedTimer: 0,
+      searchProgress: 0, // 0 to 100 when breaking LOS
+      policeHasLOS: false,
+      crimeCooldown: 0,
+
+      currentMissionIdx: 0, // 0..5
+      missionActive: false,
+      missionStageIdx: 0,
+      missionTimer: 0,
+      completedMissions: [],
+
+      customWaypoint: null, // { x, z, label }
+      tuningLevel: 1,
+      ownedVehicles: ['sedan'],
+      currentOutfit: 'racer',
+
+      // Player state
+      player: {
+        pos: new THREE.Vector3(-25, 0, -35),
+        vel: new THREE.Vector3(),
+        yaw: 0,
+        hp: 100,
+        maxHp: 100,
+        armor: 50,
+        maxArmor: 100,
+        isGrounded: true,
+        isCrouching: false,
+        isSprinting: false,
+        inVehicle: null,
+        transitionTimer: 0,
+        weaponIdx: 1, // 9mm Pistol by default
+        magAmmo: { fists: 999, pistol: 15, smg: 30, shotgun: 8, rifle: 30 },
+        reserveAmmo: { fists: 999, pistol: 120, smg: 180, shotgun: 48, rifle: 150 },
+        fireCooldown: 0,
+        reloadTimer: 0,
+        meleeTimer: 0,
+        walkCycle: 0,
+        stepTimer: 0
+      },
+
+      // Camera state
+      camera: {
+        yaw: 0,
+        pitch: 0.26,
+        distance: 7.5,
+        currentPos: new THREE.Vector3(-25, 4, -43),
+        lookTarget: new THREE.Vector3(-25, 1.6, -35)
+      }
+    };
+
+    // =========================================================================
+    // 4. SAVE / LOAD SYSTEM (localStorage with safe try/catch)
+    // =========================================================================
+    const SAVE_KEY = 'city_of_chaos_save_v1';
+
+    function saveProgress() {
+      try {
+        const payload = {
+          cash: STATE.cash,
+          completedMissions: STATE.completedMissions,
+          currentMissionIdx: STATE.currentMissionIdx,
+          ownedVehicles: STATE.ownedVehicles,
+          tuningLevel: STATE.tuningLevel,
+          currentOutfit: STATE.currentOutfit,
+          ownedWeapons: WEAPONS_DATA.filter(w => w.owned).map(w => w.id),
+          ownedOutfits: OUTFITS.filter(o => o.owned).map(o => o.id),
+          armor: STATE.player.armor
+        };
+        localStorage.setItem(SAVE_KEY, JSON.stringify(payload));
+      } catch (e) {}
+    }
+
+    function loadProgress() {
+      try {
+        const raw = localStorage.getItem(SAVE_KEY);
+        if (!raw) return;
+        const data = JSON.parse(raw);
+        if (typeof data.cash === 'number') STATE.cash = data.cash;
+        if (Array.isArray(data.completedMissions)) STATE.completedMissions = data.completedMissions;
+        if (typeof data.currentMissionIdx === 'number') STATE.currentMissionIdx = Math.min(data.currentMissionIdx, MISSIONS.length - 1);
+        if (Array.isArray(data.ownedVehicles)) STATE.ownedVehicles = data.ownedVehicles;
+        if (typeof data.tuningLevel === 'number') STATE.tuningLevel = data.tuningLevel;
+        if (typeof data.currentOutfit === 'string') STATE.currentOutfit = data.currentOutfit;
+        if (Array.isArray(data.ownedWeapons)) {
+          WEAPONS_DATA.forEach(w => { if (data.ownedWeapons.includes(w.id)) w.owned = true; });
+        }
+        if (Array.isArray(data.ownedOutfits)) {
+          OUTFITS.forEach(o => { if (data.ownedOutfits.includes(o.id)) o.owned = true; });
+        }
+      } catch (e) {}
+    }
+
+    loadProgress();
+
+    // =========================================================================
+    // 5. THREE.JS SCENE, RENDERER, LIGHTING & PROCEDURAL TEXTURES
+    // =========================================================================
+    const canvas = document.getElementById('game-canvas');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1a1025);
+    scene.fog = new THREE.FogExp2(0x24142c, 0.0022);
+
+    const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.25, 650);
+
+    // Ambient & Hemisphere Lighting
+    const hemiLight = new THREE.HemisphereLight(0xff9e6d, 0x1e293b, 0.68);
+    scene.add(hemiLight);
+
+    // Sun / Moon Directional Light
+    const dirLight = new THREE.DirectionalLight(0xff7b42, 1.15);
+    dirLight.position.set(-180, 110, -90);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.width = 2048;
+    dirLight.shadow.mapSize.height = 2048;
+    dirLight.shadow.camera.near = 10;
+    dirLight.shadow.camera.far = 480;
+    const dRange = 160;
+    dirLight.shadow.camera.left = -dRange;
+    dirLight.shadow.camera.right = dRange;
+    dirLight.shadow.camera.top = dRange;
+    dirLight.shadow.camera.bottom = -dRange;
+    scene.add(dirLight);
+
+    // Sunset Glowing Orb in Western Sky
+    const sunGeo = new THREE.SphereGeometry(28, 24, 24);
+    const sunMat = new THREE.MeshBasicMaterial({ color: 0xff5e36, fog: false });
+    const sunMesh = new THREE.Mesh(sunGeo, sunMat);
+    sunMesh.position.set(-540, 88, -80);
+    scene.add(sunMesh);
+
+    // Procedural Building Window Texture Generator
+    function createBuildingTexture(baseHex, litColorHex, density) {
+      const c = document.createElement('canvas');
+      c.width = 128; c.height = 256;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = baseHex;
+      ctx.fillRect(0, 0, 128, 256);
+
+      for (let y = 8; y < 248; y += 16) {
+        for (let x = 8; x < 120; x += 16) {
+          const lit = Math.random() < density;
+          ctx.fillStyle = lit ? litColorHex : '#0f172a';
+          ctx.fillRect(x, y, 10, 10);
+        }
+      }
+      const tex = new THREE.CanvasTexture(c);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      return tex;
+    }
+
+    const skyscraperTex1 = createBuildingTexture('#1e293b', '#fde047', 0.55);
+    const skyscraperTex2 = createBuildingTexture('#0f172a', '#38bdf8', 0.48);
+    const skyscraperTex3 = createBuildingTexture('#27272a', '#fb923c', 0.42);
+
+    // Shared Road & Ground Materials (support dynamic Wet-Road Reflections!)
+    const roadMaterial = new THREE.MeshStandardMaterial({
+      color: 0x1c212b,
+      roughness: 0.45,
+      metalness: 0.22
+    });
+    const sidewalkMaterial = new THREE.MeshStandardMaterial({
+      color: 0x475569,
+      roughness: 0.78,
+      metalness: 0.08
+    });
+
+    // =========================================================================
+    // 6. COLLISION & WORLD REGISTRIES
+    // =========================================================================
+    const colliders = [];        // { minX, maxX, minZ, maxZ, maxY, label }
+    const interactiveZones = []; // { x, z, radius, type, label }
+    const trafficLights = [];    // { x, z, redNS, greenNS, redEW, greenEW, nsGreen }
+    const streetLightBulbs = []; // Meshes that glow at night/sunset
+    const vehicles = [];         // All drivable vehicles in the world
+    const pedestrians = [];      // Sidewalk NPCs
+    const enemies = [];          // Syndicate mercenaries & foot police officers
+    const bullets = [];          // Active projectiles / tracers
+    const skidMarks = [];        // Tire skid decals on asphalt
+    const roadblocks = [];       // Police roadblock props
+
+    function addBoxCollider(cx, cz, w, d, h, label) {
+      colliders.push({
+        minX: cx - w / 2,
+        maxX: cx + w / 2,
+        minZ: cz - d / 2,
+        maxZ: cz + d / 2,
+        maxY: h || 40,
+        label: label || 'building'
+      });
+    }
+
+    // Helper to create an Accessible Walk-In Building with an open doorway gap!
+    function createAccessibleBuilding(opts) {
+      const { x, z, w, d, h, doorSide, doorWidth, wallColor, neonColor, title, zoneType } = opts;
+      const group = new THREE.Group();
+      group.position.set(x, 0, z);
+      const wallThick = 1.0;
+      const wallMat = new THREE.MeshStandardMaterial({ color: wallColor, roughness: 0.5, metalness: 0.2 });
+      const floorMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.4, metalness: 0.3 });
+      const neonMat = new THREE.MeshBasicMaterial({ color: neonColor });
+
+      // Interior Floor
+      const floor = new THREE.Mesh(new THREE.BoxGeometry(w, 0.22, d), floorMat);
+      floor.position.y = 0.11;
+      floor.receiveShadow = true;
+      group.add(floor);
+
+      // Roof
+      const roof = new THREE.Mesh(new THREE.BoxGeometry(w + 0.6, 0.8, d + 0.6), wallMat);
+      roof.position.y = h;
+      roof.castShadow = true;
+      group.add(roof);
+
+      // Neon Roof Trim
+      const trim = new THREE.Mesh(new THREE.BoxGeometry(w + 0.9, 0.35, d + 0.9), neonMat);
+      trim.position.y = h - 0.5;
+      group.add(trim);
+
+      // Interior Point Light
+      const pLight = new THREE.PointLight(neonColor, 1.3, 28);
+      pLight.position.set(0, h - 1.5, 0);
+      group.add(pLight);
+
+      const halfW = w / 2;
+      const halfD = d / 2;
+      const segW = (w - doorWidth) / 2;
+      const segD = (d - doorWidth) / 2;
+
+      // North Wall (z = -halfD)
+      if (doorSide === 'north') {
+        const wL = new THREE.Mesh(new THREE.BoxGeometry(segW, h, wallThick), wallMat);
+        wL.position.set(-halfW + segW / 2, h / 2, -halfD);
+        const wR = new THREE.Mesh(new THREE.BoxGeometry(segW, h, wallThick), wallMat);
+        wR.position.set(halfW - segW / 2, h / 2, -halfD);
+        group.add(wL, wR);
+        addBoxCollider(x - halfW + segW / 2, z - halfD, segW, wallThick, h, title);
+        addBoxCollider(x + halfW - segW / 2, z - halfD, segW, wallThick, h, title);
+      } else {
+        const wN = new THREE.Mesh(new THREE.BoxGeometry(w, h, wallThick), wallMat);
+        wN.position.set(0, h / 2, -halfD);
+        group.add(wN);
+        addBoxCollider(x, z - halfD, w, wallThick, h, title);
+      }
+
+      // South Wall (z = +halfD)
+      if (doorSide === 'south') {
+        const wL = new THREE.Mesh(new THREE.BoxGeometry(segW, h, wallThick), wallMat);
+        wL.position.set(-halfW + segW / 2, h / 2, halfD);
+        const wR = new THREE.Mesh(new THREE.BoxGeometry(segW, h, wallThick), wallMat);
+        wR.position.set(halfW - segW / 2, h / 2, halfD);
+        group.add(wL, wR);
+        addBoxCollider(x - halfW + segW / 2, z + halfD, segW, wallThick, h, title);
+        addBoxCollider(x + halfW - segW / 2, z + halfD, segW, wallThick, h, title);
+      } else {
+        const wS = new THREE.Mesh(new THREE.BoxGeometry(w, h, wallThick), wallMat);
+        wS.position.set(0, h / 2, halfD);
+        group.add(wS);
+        addBoxCollider(x, z + halfD, w, wallThick, h, title);
+      }
+
+      // West Wall (x = -halfW)
+      if (doorSide === 'west') {
+        const wL = new THREE.Mesh(new THREE.BoxGeometry(wallThick, h, segD), wallMat);
+        wL.position.set(-halfW, h / 2, -halfD + segD / 2);
+        const wR = new THREE.Mesh(new THREE.BoxGeometry(wallThick, h, segD), wallMat);
+        wR.position.set(-halfW, h / 2, halfD - segD / 2);
+        group.add(wL, wR);
+        addBoxCollider(x - halfW, z - halfD + segD / 2, wallThick, segD, h, title);
+        addBoxCollider(x - halfW, z + halfD - segD / 2, wallThick, segD, h, title);
+      } else {
+        const wW = new THREE.Mesh(new THREE.BoxGeometry(wallThick, h, d), wallMat);
+        wW.position.set(-halfW, h / 2, 0);
+        group.add(wW);
+        addBoxCollider(x - halfW, z, wallThick, d, h, title);
+      }
+
+      // East Wall (x = +halfW)
+      const wE = new THREE.Mesh(new THREE.BoxGeometry(wallThick, h, d), wallMat);
+      wE.position.set(halfW, h / 2, 0);
+      group.add(wE);
+      addBoxCollider(x + halfW, z, wallThick, d, h, title);
+
+      // Interior Counter / Prop Terminal & Glowing Floor Ring
+      const counter = new THREE.Mesh(
+        new THREE.BoxGeometry(3.6, 1.2, 1.4),
+        new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.5, roughness: 0.3 })
+      );
+      counter.position.set(0, 0.6, 0);
+      group.add(counter);
+
+      const ringGeo = new THREE.RingGeometry(1.6, 2.2, 24);
+      const ringMat = new THREE.MeshBasicMaterial({ color: neonColor, side: THREE.DoubleSide });
+      const ring = new THREE.Mesh(ringGeo, ringMat);
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.set(0, 0.26, 0);
+      group.add(ring);
+
+      scene.add(group);
+      interactiveZones.push({
+        x, z, radius: Math.max(w, d) * 0.45,
+        type: zoneType,
+        label: title
+      });
+    }
+
+    // =========================================================================
+    // 7. OPEN-WORLD CITY GENERATION (Roads, Skyscrapers, Beach, Bridge, Shops)
+    // =========================================================================
+    let oceanMesh = null;
+
+    function buildOpenWorldCity() {
+      // 1. Base Ground Plane (Mainland & Industrial Island)
+      const groundGeo = new THREE.PlaneGeometry(1400, 1400);
+      const groundMat = new THREE.MeshStandardMaterial({ color: 0x1e2631, roughness: 0.85, metalness: 0.05 });
+      const ground = new THREE.Mesh(groundGeo, groundMat);
+      ground.rotation.x = -Math.PI / 2;
+      ground.position.y = -0.05;
+      ground.receiveShadow = true;
+      scene.add(ground);
+
+      // 2. Sunset Beach Sand Strip (West Coast: x from -430 to -350)
+      const sandGeo = new THREE.PlaneGeometry(95, 1200);
+      const sandMat = new THREE.MeshStandardMaterial({ color: 0xd6b47c, roughness: 0.9 });
+      const sand = new THREE.Mesh(sandGeo, sandMat);
+      sand.rotation.x = -Math.PI / 2;
+      sand.position.set(-390, 0.02, 0);
+      sand.receiveShadow = true;
+      scene.add(sand);
+
+      // 3. Ocean Water (West of x = -430) + Canal Waterway (x = 172..204)
+      const waterMat = new THREE.MeshStandardMaterial({
+        color: 0x0284c7,
+        roughness: 0.18,
+        metalness: 0.65
+      });
+      oceanMesh = new THREE.Mesh(new THREE.PlaneGeometry(450, 1400), waterMat);
+      oceanMesh.rotation.x = -Math.PI / 2;
+      oceanMesh.position.set(-650, 0.04, 0);
+      scene.add(oceanMesh);
+
+      const canalMesh = new THREE.Mesh(new THREE.PlaneGeometry(32, 1400), waterMat);
+      canalMesh.rotation.x = -Math.PI / 2;
+      canalMesh.position.set(188, 0.03, 0);
+      scene.add(canalMesh);
+
+      // Sunset Pier & Helipad (x: -430 to -505, z: 0)
+      const pierGroup = new THREE.Group();
+      const pierDeck = new THREE.Mesh(
+        new THREE.BoxGeometry(85, 1.2, 24),
+        new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.8 })
+      );
+      pierDeck.position.set(-465, 0.5, 0);
+      pierDeck.receiveShadow = true;
+      pierGroup.add(pierDeck);
+
+      const helipadRing = new THREE.Mesh(
+        new THREE.RingGeometry(6, 7.2, 32),
+        new THREE.MeshBasicMaterial({ color: 0xfacc15, side: THREE.DoubleSide })
+      );
+      helipadRing.rotation.x = -Math.PI / 2;
+      helipadRing.position.set(-485, 1.15, 0);
+      pierGroup.add(helipadRing);
+      scene.add(pierGroup);
+
+      // 4. Grid Roads & Lane Markings
+      const roadCoords = [-360, -240, -120, 0, 120, 240, 360];
+      const roadWidth = 24;
+      const dashMat = new THREE.MeshBasicMaterial({ color: 0xfacc15 });
+      const whiteLineMat = new THREE.MeshBasicMaterial({ color: 0xe2e8f0 });
+
+      // North-South Avenues
+      roadCoords.forEach(rx => {
+        const rMesh = new THREE.Mesh(new THREE.PlaneGeometry(roadWidth, 860), roadMaterial);
+        rMesh.rotation.x = -Math.PI / 2;
+        rMesh.position.set(rx, 0.05, 0);
+        rMesh.receiveShadow = true;
+        scene.add(rMesh);
+
+        for (let z = -400; z <= 400; z += 18) {
+          const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.45, 7), dashMat);
+          dash.rotation.x = -Math.PI / 2;
+          dash.position.set(rx, 0.07, z);
+          scene.add(dash);
+        }
+      });
+
+      // East-West Streets
+      roadCoords.forEach(rz => {
+        const rMesh = new THREE.Mesh(new THREE.PlaneGeometry(860, roadWidth), roadMaterial);
+        rMesh.rotation.x = -Math.PI / 2;
+        rMesh.position.set(0, 0.06, rz);
+        rMesh.receiveShadow = true;
+        scene.add(rMesh);
+
+        for (let x = -400; x <= 400; x += 18) {
+          const dash = new THREE.Mesh(new THREE.PlaneGeometry(7, 0.45), dashMat);
+          dash.rotation.x = -Math.PI / 2;
+          dash.position.set(x, 0.08, rz);
+          scene.add(dash);
+        }
+      });
+
+      // 5. Iconic Red Steel Suspension Bridges across the Harbor Canal (x = 188, at z = 0, -120, 120)
+      [-120, 0, 120].forEach(bz => {
+        const bridgeGroup = new THREE.Group();
+        bridgeGroup.position.set(188, 0, bz);
+        const deck = new THREE.Mesh(
+          new THREE.BoxGeometry(44, 0.5, 24),
+          new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.5 })
+        );
+        deck.position.y = 0.15;
+        bridgeGroup.add(deck);
+
+        const towerMat = new THREE.MeshStandardMaterial({ color: 0xb91c1c, metalness: 0.5, roughness: 0.4 });
+        [-14, 14].forEach(tx => {
+          [-13, 13].forEach(tz => {
+            const pillar = new THREE.Mesh(new THREE.BoxGeometry(2.2, 26, 2.2), towerMat);
+            pillar.position.set(tx, 13, tz);
+            pillar.castShadow = true;
+            bridgeGroup.add(pillar);
+          });
+          const crossBeam = new THREE.Mesh(new THREE.BoxGeometry(2.2, 2.5, 28), towerMat);
+          crossBeam.position.set(tx, 23, 0);
+          bridgeGroup.add(crossBeam);
+        });
+        scene.add(bridgeGroup);
+      });
+
+      // 6. Traffic Lights & Crosswalks at Core Intersections
+      const coreIntersections = [-240, -120, 0, 120, 240];
+      const poleMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.7 });
+
+      coreIntersections.forEach(ix => {
+        coreIntersections.forEach(iz => {
+          for (let s = -8; s <= 8; s += 3.2) {
+            const cwN = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 3.2), whiteLineMat);
+            cwN.rotation.x = -Math.PI / 2;
+            cwN.position.set(ix + s, 0.09, iz - 14);
+            scene.add(cwN);
+          }
+
+          const tlGroup = new THREE.Group();
+          tlGroup.position.set(ix + 13.5, 0, iz - 13.5);
+          const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.28, 7.5, 8), poleMat);
+          pole.position.y = 3.75;
+          tlGroup.add(pole);
+
+          const box = new THREE.Mesh(new THREE.BoxGeometry(1.1, 2.2, 1.1), poleMat);
+          box.position.set(0, 6.8, 0);
+          tlGroup.add(box);
+
+          const redNS = new THREE.Mesh(new THREE.SphereGeometry(0.32, 8, 8), new THREE.MeshBasicMaterial({ color: 0xef4444 }));
+          redNS.position.set(0, 7.3, 0.58);
+          const greenNS = new THREE.Mesh(new THREE.SphereGeometry(0.32, 8, 8), new THREE.MeshBasicMaterial({ color: 0x14532d }));
+          greenNS.position.set(0, 6.3, 0.58);
+
+          const redEW = new THREE.Mesh(new THREE.SphereGeometry(0.32, 8, 8), new THREE.MeshBasicMaterial({ color: 0x450a0a }));
+          redEW.position.set(-0.58, 7.3, 0);
+          const greenEW = new THREE.Mesh(new THREE.SphereGeometry(0.32, 8, 8), new THREE.MeshBasicMaterial({ color: 0x22c55e }));
+          greenEW.position.set(-0.58, 6.3, 0);
+
+          tlGroup.add(redNS, greenNS, redEW, greenEW);
+          scene.add(tlGroup);
+
+          trafficLights.push({
+            x: ix, z: iz,
+            redNS, greenNS, redEW, greenEW,
+            nsGreen: true
+          });
+        });
+      });
+
+      // 7. Build the 5 Accessible Interior Buildings
+      createAccessibleBuilding({
+        x: -60, z: -60, w: 22, d: 22, h: 9,
+        doorSide: 'south', doorWidth: 7,
+        wallColor: 0x1e293b, neonColor: 0x10b981,
+        title: 'Vance Safehouse & Garage', zoneType: 'safehouse'
+      });
+
+      createAccessibleBuilding({
+        x: 60, z: -60, w: 26, d: 24, h: 10,
+        doorSide: 'south', doorWidth: 11,
+        wallColor: 0x172554, neonColor: 0x06b6d4,
+        title: 'Auto Customs & Dealership', zoneType: 'garage'
+      });
+
+      createAccessibleBuilding({
+        x: -60, z: 60, w: 22, d: 20, h: 8,
+        doorSide: 'north', doorWidth: 7,
+        wallColor: 0x27272a, neonColor: 0xf59e0b,
+        title: '24/7 Store & Tactical Armory', zoneType: 'store'
+      });
+
+      createAccessibleBuilding({
+        x: 60, z: 60, w: 22, d: 20, h: 8.5,
+        doorSide: 'north', doorWidth: 7,
+        wallColor: 0x2e1065, neonColor: 0xc084fc,
+        title: 'Metro Threads Clothing Shop', zoneType: 'clothing'
+      });
+
+      createAccessibleBuilding({
+        x: 300, z: 180, w: 34, d: 28, h: 12,
+        doorSide: 'west', doorWidth: 10,
+        wallColor: 0x3f2e21, neonColor: 0xef4444,
+        title: 'Syndicate Warehouse Server Room', zoneType: 'warehouse'
+      });
+
+      // 8. Generate City Blocks (Sidewalks, Skyscrapers, Houses, Industrial Props & Streetlights)
+      const blockCenters = [-300, -180, -60, 60, 180, 300];
+      const lampBulbMat = new THREE.MeshBasicMaterial({ color: 0xfef08a });
+      streetLightBulbs.push(lampBulbMat);
+
+      blockCenters.forEach(bx => {
+        blockCenters.forEach(bz => {
+          if (Math.abs(bx - 180) < 25) return;
+
+          const sw = new THREE.Mesh(new THREE.BoxGeometry(92, 0.3, 92), sidewalkMaterial);
+          sw.position.set(bx, 0.15, bz);
+          sw.receiveShadow = true;
+          scene.add(sw);
+
+          [[-42, -42], [42, -42], [-42, 42], [42, 42]].forEach(([ox, oz]) => {
+            const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.2, 6.5, 6), poleMat);
+            pole.position.set(bx + ox, 3.25, bz + oz);
+            scene.add(pole);
+            const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.42, 8, 8), lampBulbMat);
+            bulb.position.set(bx + ox, 6.6, bz + oz);
+            scene.add(bulb);
+          });
+
+          const isSpecialBlock =
+            (bx === -60 && bz === -60) ||
+            (bx === 60 && bz === -60) ||
+            (bx === -60 && bz === 60) ||
+            (bx === 60 && bz === 60) ||
+            (bx === 300 && bz === 180);
+
+          if (isSpecialBlock) {
+            const subZ = bz < 0 ? bz - 26 : bz + 26;
+            const towerH = 38;
+            const tower = new THREE.Mesh(
+              new THREE.BoxGeometry(24, towerH, 18),
+              new THREE.MeshStandardMaterial({ map: skyscraperTex1, roughness: 0.3, metalness: 0.4 })
+            );
+            tower.position.set(bx - 24, towerH / 2, subZ);
+            tower.castShadow = true;
+            tower.receiveShadow = true;
+            scene.add(tower);
+            addBoxCollider(bx - 24, subZ, 24, 18, towerH, 'plaza_tower');
+            return;
+          }
+
+          if (bx >= 240) {
+            const whH = 14 + ((Math.abs(bx + bz)) % 10);
+            const wh = new THREE.Mesh(
+              new THREE.BoxGeometry(36, whH, 26),
+              new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.7 })
+            );
+            wh.position.set(bx - 12, whH / 2, bz - 12);
+            wh.castShadow = true;
+            scene.add(wh);
+            addBoxCollider(bx - 12, bz - 12, 36, 26, whH, 'industrial_warehouse');
+
+            const containerColors = [0xdc2626, 0x2563eb, 0xd97706, 0x059669];
+            for (let c = 0; c < 3; c++) {
+              const cont = new THREE.Mesh(
+                new THREE.BoxGeometry(14, 4.5, 6),
+                new THREE.MeshStandardMaterial({ color: containerColors[(c + Math.abs(bz)) % 4], roughness: 0.6 })
+              );
+              cont.position.set(bx + 22, 2.4, bz - 18 + c * 14);
+              cont.castShadow = true;
+              scene.add(cont);
+              addBoxCollider(bx + 22, bz - 18 + c * 14, 14, 6, 4.5, 'cargo_container');
+            }
+          } else if (bz <= -240 || bz >= 240) {
+            const houseOffsets = [[-22, -20], [22, -20], [-22, 20], [22, 20]];
+            const houseColors = [0xe2e8f0, 0xfef3c7, 0xdbeafe, 0xfecdd3];
+            houseOffsets.forEach(([hx, hz], idx) => {
+              const hGroup = new THREE.Group();
+              hGroup.position.set(bx + hx, 0, bz + hz);
+              const body = new THREE.Mesh(
+                new THREE.BoxGeometry(18, 7.5, 16),
+                new THREE.MeshStandardMaterial({ color: houseColors[idx % 4], roughness: 0.8 })
+              );
+              body.position.y = 3.75;
+              body.castShadow = true;
+              hGroup.add(body);
+
+              const roof = new THREE.Mesh(
+                new THREE.ConeGeometry(14, 5.5, 4),
+                new THREE.MeshStandardMaterial({ color: 0x7c2d12, roughness: 0.85 })
+              );
+              roof.position.y = 10.2;
+              roof.rotation.y = Math.PI / 4;
+              hGroup.add(roof);
+              scene.add(hGroup);
+              addBoxCollider(bx + hx, bz + hz, 18, 16, 11, 'residential_house');
+            });
+          } else {
+            const quadrants = [[-22, -22], [22, -22], [-22, 22], [22, 22]];
+            const texPool = [skyscraperTex1, skyscraperTex2, skyscraperTex3];
+            quadrants.forEach(([qx, qz], i) => {
+              const h = 42 + ((Math.abs(bx * 3 + bz * 7 + i * 19)) % 68);
+              const w = 24 + (i % 2) * 4;
+              const d = 24 + ((i + 1) % 2) * 4;
+              const tex = texPool[(i + Math.abs(bx)) % 3];
+              const bMat = new THREE.MeshStandardMaterial({
+                map: tex,
+                roughness: 0.25,
+                metalness: 0.55
+              });
+              const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), bMat);
+              mesh.position.set(bx + qx, h / 2, bz + qz);
+              mesh.castShadow = true;
+              mesh.receiveShadow = true;
+              scene.add(mesh);
+              addBoxCollider(bx + qx, bz + qz, w, d, h, 'skyscraper');
+            });
+          }
+        });
+      });
+
+      // 9. Palm Trees along Sunset Beach Boardwalk
+      const trunkMat = new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.9 });
+      const frondMat = new THREE.MeshStandardMaterial({ color: 0x15803d, roughness: 0.7 });
+      for (let pz = -380; pz <= 380; pz += 32) {
+        const palm = new THREE.Group();
+        palm.position.set(-352, 0, pz);
+        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.5, 9, 7), trunkMat);
+        trunk.position.y = 4.5;
+        palm.add(trunk);
+        const crown = new THREE.Mesh(new THREE.DodecahedronGeometry(2.8, 0), frondMat);
+        crown.position.y = 9.2;
+        crown.scale.set(1.4, 0.55, 1.4);
+        palm.add(crown);
+        scene.add(palm);
+      }
+
+      // Downtown Broadcast Tower Monument at (0, 120) for Mission 6
+      const spire = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.6, 2.6, 48, 12),
+        new THREE.MeshStandardMaterial({ color: 0x38bdf8, emissive: 0x0284c7, emissiveIntensity: 0.5 })
+      );
+      spire.position.set(0, 24, 120);
+      scene.add(spire);
+    }
+
+    buildOpenWorldCity();
+
+    // =========================================================================
+    // 8. RAIN PARTICLE SYSTEM & ENVIRONMENT / WEATHER CONTROLLER
+    // =========================================================================
+    const rainCount = 1800;
+    const rainGeo = new THREE.BufferGeometry();
+    const rainPositions = new Float32Array(rainCount * 3);
+    for (let i = 0; i < rainCount; i++) {
+      rainPositions[i * 3] = (Math.random() - 0.5) * 180;
+      rainPositions[i * 3 + 1] = Math.random() * 65;
+      rainPositions[i * 3 + 2] = (Math.random() - 0.5) * 180;
+    }
+    rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPositions, 3));
+    const rainMat = new THREE.PointsMaterial({ color: 0xbae6fd, size: 0.35, transparent: true, opacity: 0.65 });
+    const rainSystem = new THREE.Points(rainGeo, rainMat);
+    rainSystem.visible = false;
+    scene.add(rainSystem);
+
+    function applyEnvironmentPreset(preset) {
+      STATE.envPreset = preset;
+      const iconEl = document.getElementById('env-icon');
+      const labelEl = document.getElementById('env-label');
+
+      if (preset === 'sunset') {
+        STATE.isRaining = false;
+        STATE.timeOfDay = 19.75;
+        scene.background.setHex(0x1f112b);
+        scene.fog.color.setHex(0x2d1636);
+        hemiLight.color.setHex(0xff9e6d);
+        hemiLight.groundColor.setHex(0x1e293b);
+        hemiLight.intensity = 0.72;
+        dirLight.color.setHex(0xff773d);
+        dirLight.intensity = 1.2;
+        sunMesh.visible = true;
+        sunMesh.material.color.setHex(0xff5e36);
+        roadMaterial.roughness = 0.42;
+        roadMaterial.metalness = 0.25;
+        if (iconEl) iconEl.textContent = '🌇';
+        if (labelEl) labelEl.textContent = 'Sunset';
+      } else if (preset === 'night') {
+        STATE.isRaining = false;
+        STATE.timeOfDay = 23.5;
+        scene.background.setHex(0x050814);
+        scene.fog.color.setHex(0x070b1c);
+        hemiLight.color.setHex(0x38bdf8);
+        hemiLight.groundColor.setHex(0x090d16);
+        hemiLight.intensity = 0.38;
+        dirLight.color.setHex(0x60a5fa);
+        dirLight.intensity = 0.45;
+        sunMesh.visible = false;
+        roadMaterial.roughness = 0.38;
+        roadMaterial.metalness = 0.32;
+        if (iconEl) iconEl.textContent = '🌃';
+        if (labelEl) labelEl.textContent = 'Night';
+      } else if (preset === 'rain') {
+        STATE.isRaining = true;
+        STATE.timeOfDay = 21.2;
+        scene.background.setHex(0x0b1320);
+        scene.fog.color.setHex(0x0f1a2c);
+        hemiLight.color.setHex(0x7dd3fc);
+        hemiLight.groundColor.setHex(0x0f172a);
+        hemiLight.intensity = 0.52;
+        dirLight.color.setHex(0x93c5fd);
+        dirLight.intensity = 0.55;
+        sunMesh.visible = false;
+        roadMaterial.roughness = 0.08;
+        roadMaterial.metalness = 0.78;
+        if (iconEl) iconEl.textContent = '🌧️';
+        if (labelEl) labelEl.textContent = 'Storm';
+      } else {
+        STATE.isRaining = false;
+        STATE.timeOfDay = 13.5;
+        scene.background.setHex(0x38bdf8);
+        scene.fog.color.setHex(0x7dd3fc);
+        hemiLight.color.setHex(0xffffff);
+        hemiLight.groundColor.setHex(0x334155);
+        hemiLight.intensity = 0.9;
+        dirLight.color.setHex(0xfffbeb);
+        dirLight.intensity = 1.3;
+        sunMesh.visible = true;
+        sunMesh.material.color.setHex(0xfef08a);
+        roadMaterial.roughness = 0.65;
+        roadMaterial.metalness = 0.12;
+        if (iconEl) iconEl.textContent = '☀️';
+        if (labelEl) labelEl.textContent = 'Day';
+      }
+      rainSystem.visible = STATE.isRaining;
+    }
+
+    applyEnvironmentPreset('sunset');
+
+    // =========================================================================
+    // 9. ARTICULATED 3D PLAYER CHARACTER & WEAPON RIG
+    // =========================================================================
+    const playerGroup = new THREE.Group();
+    const skinMat = new THREE.MeshStandardMaterial({ color: 0xe0ac69, roughness: 0.6 });
+    const shirtMat = new THREE.MeshStandardMaterial({ color: 0xdc2626, roughness: 0.5 });
+    const pantsMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.7 });
+    const hairMat = new THREE.MeshStandardMaterial({ color: 0x18181b, roughness: 0.8 });
+
+    const playerTorso = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.82, 0.36), shirtMat);
+    playerTorso.position.y = 1.25;
+    playerTorso.castShadow = true;
+    playerGroup.add(playerTorso);
+
+    const playerHead = new THREE.Group();
+    playerHead.position.set(0, 1.88, 0);
+    const headBox = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.42, 0.42), skinMat);
+    const hairBox = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.16, 0.45), hairMat);
+    hairBox.position.y = 0.18;
+    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.1, 0.08), new THREE.MeshBasicMaterial({ color: 0x090d16 }));
+    visor.position.set(0, 0.03, 0.21);
+    playerHead.add(headBox, hairBox, visor);
+    playerGroup.add(playerHead);
+
+    const leftArm = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.72, 0.22), shirtMat);
+    leftArm.position.set(-0.46, 1.22, 0);
+    const rightArm = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.72, 0.22), shirtMat);
+    rightArm.position.set(0.46, 1.22, 0);
+
+    const heldGunMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.12, 0.16, 0.48),
+      new THREE.MeshStandardMaterial({ color: 0x111827, metalness: 0.8, roughness: 0.2 })
+    );
+    heldGunMesh.position.set(0, -0.28, 0.26);
+    rightArm.add(heldGunMesh);
+
+    const muzzleFlash = new THREE.Mesh(
+      new THREE.SphereGeometry(0.18, 8, 8),
+      new THREE.MeshBasicMaterial({ color: 0xfef08a })
+    );
+    muzzleFlash.position.set(0, -0.26, 0.56);
+    muzzleFlash.visible = false;
+    rightArm.add(muzzleFlash);
+
+    const leftLeg = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.78, 0.26), pantsMat);
+    leftLeg.position.set(-0.19, 0.42, 0);
+    const rightLeg = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.78, 0.26), pantsMat);
+    rightLeg.position.set(0.19, 0.42, 0);
+
+    playerGroup.add(leftArm, rightArm, leftLeg, rightLeg);
+    playerGroup.position.copy(STATE.player.pos);
+    scene.add(playerGroup);
+
+    function applyOutfitToPlayer(outfitId) {
+      const found = OUTFITS.find(o => o.id === outfitId) || OUTFITS[0];
+      STATE.currentOutfit = found.id;
+      shirtMat.color.setHex(found.shirt);
+      pantsMat.color.setHex(found.pants);
+      saveProgress();
+    }
+    applyOutfitToPlayer(STATE.currentOutfit);
+
+    // =========================================================================
+    // 10. VEHICLE BUILDER & DRIVING PHYSICS SYSTEM
+    // =========================================================================
+    function createVehicleMesh(classId, customColor) {
+      const spec = VEHICLE_CLASSES[classId] || VEHICLE_CLASSES.sedan;
+      const group = new THREE.Group();
+      const bodyColor = customColor || spec.color;
+      const bodyMat = new THREE.MeshStandardMaterial({ color: bodyColor, roughness: 0.22, metalness: 0.65 });
+      const glassMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.1, metalness: 0.9 });
+      const wheelMat = new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.8 });
+
+      if (classId === 'moto') {
+        const frame = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.65, 1.9), bodyMat);
+        frame.position.y = 0.65;
+        frame.castShadow = true;
+        group.add(frame);
+
+        const fWheel = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.38, 0.22, 12), wheelMat);
+        fWheel.rotation.z = Math.PI / 2;
+        fWheel.position.set(0, 0.38, 0.82);
+        const rWheel = fWheel.clone();
+        rWheel.position.set(0, 0.38, -0.82);
+        group.add(fWheel, rWheel);
+      } else {
+        const chassisH = classId === 'bus' ? spec.h * 0.82 : spec.h * 0.54;
+        const chassis = new THREE.Mesh(new THREE.BoxGeometry(spec.w, chassisH, spec.l), bodyMat);
+        chassis.position.y = chassisH / 2 + 0.32;
+        chassis.castShadow = true;
+        chassis.receiveShadow = true;
+        group.add(chassis);
+
+        if (classId === 'bus') {
+          const winBand = new THREE.Mesh(new THREE.BoxGeometry(spec.w + 0.04, 0.85, spec.l * 0.88), glassMat);
+          winBand.position.set(0, chassisH * 0.72, 0);
+          group.add(winBand);
+        } else {
+          const cabinL = classId === 'truck' ? spec.l * 0.36 : spec.l * 0.54;
+          const cabinZ = classId === 'truck' ? spec.l * 0.22 : -spec.l * 0.05;
+          const cabin = new THREE.Mesh(new THREE.BoxGeometry(spec.w * 0.86, spec.h * 0.44, cabinL), glassMat);
+          cabin.position.set(0, chassisH + spec.h * 0.22 + 0.28, cabinZ);
+          group.add(cabin);
+        }
+
+        if (classId === 'sports') {
+          const spoiler = new THREE.Mesh(new THREE.BoxGeometry(spec.w * 0.95, 0.12, 0.45), bodyMat);
+          spoiler.position.set(0, chassisH + 0.52, -spec.l * 0.44);
+          group.add(spoiler);
+        }
+
+        if (classId === 'police') {
+          const whiteStripe = new THREE.Mesh(
+            new THREE.BoxGeometry(spec.w + 0.04, chassisH * 0.85, spec.l * 0.42),
+            new THREE.MeshStandardMaterial({ color: 0xf8fafc })
+          );
+          whiteStripe.position.y = chassisH / 2 + 0.32;
+          group.add(whiteStripe);
+
+          const redSiren = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.2, 0.3), new THREE.MeshBasicMaterial({ color: 0xef4444 }));
+          redSiren.position.set(-0.4, spec.h + 0.34, 0);
+          const blueSiren = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.2, 0.3), new THREE.MeshBasicMaterial({ color: 0x3b82f6 }));
+          blueSiren.position.set(0.4, spec.h + 0.34, 0);
+          group.add(redSiren, blueSiren);
+          group.userData.redSiren = redSiren;
+          group.userData.blueSiren = blueSiren;
+        }
+
+        const wheelGeo = new THREE.CylinderGeometry(0.42, 0.42, 0.32, 12);
+        [[-spec.w / 2, spec.l * 0.33], [spec.w / 2, spec.l * 0.33], [-spec.w / 2, -spec.l * 0.33], [spec.w / 2, -spec.l * 0.33]].forEach(([wx, wz]) => {
+          const wMesh = new THREE.Mesh(wheelGeo, wheelMat);
+          wMesh.rotation.z = Math.PI / 2;
+          wMesh.position.set(wx, 0.42, wz);
+          group.add(wMesh);
+        });
+      }
+
+      const hlMat = new THREE.MeshBasicMaterial({ color: 0xfef9c3 });
+      const blMat = new THREE.MeshBasicMaterial({ color: 0x7f1d1d });
+
+      const hlL = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.2, 0.1), hlMat);
+      hlL.position.set(-spec.w * 0.34, 0.68, spec.l / 2 + 0.02);
+      const hlR = hlL.clone();
+      hlR.position.x = spec.w * 0.34;
+
+      const blL = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.2, 0.1), blMat);
+      blL.position.set(-spec.w * 0.34, 0.68, -spec.l / 2 - 0.02);
+      const blR = blL.clone();
+      blR.position.x = spec.w * 0.34;
+
+      group.add(hlL, hlR, blL, blR);
+      group.userData.brakeMat = blMat;
+      group.userData.bodyMat = bodyMat;
+      return group;
+    }
+
+    // Unified signature: spawnVehicle(classId, x, z, heading, isTraffic, customColor)
+    function spawnVehicle(classId, x, z, heading, isTraffic, customColor) {
+      const spec = VEHICLE_CLASSES[classId] || VEHICLE_CLASSES.sedan;
+      const mesh = createVehicleMesh(classId, customColor);
+      mesh.position.set(x, 0, z);
+      mesh.rotation.y = heading || 0;
+      scene.add(mesh);
+
+      const veh = {
+        classId,
+        spec,
+        mesh,
+        pos: mesh.position,
+        heading: heading || 0,
+        speed: 0,
+        steerAngle: 0,
+        hp: spec.maxHp,
+        maxHp: spec.maxHp,
+        isTraffic: !!isTraffic,
+        isPolice: classId === 'police',
+        isMissionCourier: false,
+        isRacer: false,
+        racerIdx: 0,
+        racerCp: 0,
+        pitch: 0,
+        roll: 0
+      };
+      vehicles.push(veh);
+      return veh;
+    }
+
+    // Spawn Parked Hero Vehicles around Safehouse, Auto Customs, Beach & Downtown
+    spawnVehicle('sports', -18, -28, 0, false, '#ef4444');
+    spawnVehicle('moto', -42, -42, Math.PI / 4, false, '#f59e0b');
+    spawnVehicle('suv', 42, -42, -Math.PI / 4, false, '#10b981');
+    spawnVehicle('sedan', -82, -58, 0, false, '#3b82f6');
+    spawnVehicle('truck', 255, 155, Math.PI / 2, false, '#a855f7');
+    spawnVehicle('sports', -345, 15, 0, false, '#06b6d4');
+
+    // Spawn 26 Moving AI Traffic Vehicles (Cars, Motorcycles, Buses, SUVs, Trucks)
+    const trafficClasses = ['sedan', 'sports', 'suv', 'moto', 'bus', 'truck'];
+    const avenues = [-240, -120, 0, 120, 240];
+    for (let i = 0; i < 26; i++) {
+      const cId = trafficClasses[i % trafficClasses.length];
+      const av = avenues[i % avenues.length];
+      const alongZ = (i % 2 === 0);
+      const offset = -300 + (i * 28) % 600;
+      const laneOffset = 5.5;
+      const x = alongZ ? (av + laneOffset) : offset;
+      const z = alongZ ? offset : (av - laneOffset);
+      const heading = alongZ ? 0 : Math.PI / 2;
+      const colors = ['#3b82f6', '#ef4444', '#f59e0b', '#10b981', '#0284c7', '#6366f1'];
+      spawnVehicle(cId, x, z, heading, true, colors[i % colors.length]);
+    }
+
+    // =========================================================================
+    // 11. PEDESTRIANS & ENEMY / POLICE AI NPCS
+    // =========================================================================
+    function createHumanNPCMesh(shirtHex, pantsHex, hasGun) {
+      const g = new THREE.Group();
+      const sMat = new THREE.MeshStandardMaterial({ color: shirtHex, roughness: 0.6 });
+      const pMat = new THREE.MeshStandardMaterial({ color: pantsHex, roughness: 0.7 });
+
+      const torso = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.78, 0.34), sMat);
+      torso.position.y = 1.2;
+      torso.castShadow = true;
+      const head = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.38, 0.38), skinMat);
+      head.position.y = 1.82;
+      const legL = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.72, 0.24), pMat);
+      legL.position.set(-0.16, 0.38, 0);
+      const legR = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.72, 0.24), pMat);
+      legR.position.set(0.16, 0.38, 0);
+      g.add(torso, head, legL, legR);
+
+      if (hasGun) {
+        const gun = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.14, 0.46), new THREE.MeshBasicMaterial({ color: 0x090d16 }));
+        gun.position.set(0.36, 1.25, 0.28);
+        g.add(gun);
+      }
+      g.userData = { legL, legR, torso };
+      return g;
+    }
+
+    // Spawn 40 Sidewalk Pedestrians
+    const pedColors = [0x38bdf8, 0xf43f5e, 0xa855f7, 0xfacc15, 0x22c55e, 0xf97316];
+    for (let i = 0; i < 40; i++) {
+      const bx = [-300, -180, -60, 60, 180][(i * 3) % 5];
+      const bz = [-300, -180, -60, 60, 180][(i * 7) % 5];
+      const px = bx + (i % 2 === 0 ? 43 : -43);
+      const pz = bz + ((i * 17) % 70) - 35;
+      const mesh = createHumanNPCMesh(pedColors[i % pedColors.length], 0x1e293b, false);
+      mesh.position.set(px, 0.3, pz);
+      scene.add(mesh);
+      pedestrians.push({
+        mesh,
+        pos: mesh.position,
+        heading: (i % 4) * (Math.PI / 2),
+        speed: 3.2,
+        panicTimer: 0,
+        hp: 45,
+        walkPhase: Math.random() * 6
+      });
+    }
+
+    function spawnHostileNPC(x, z, type) {
+      const isPolice = (type === 'police');
+      const shirt = isPolice ? 0x1d4ed8 : 0x991b1b;
+      const pants = 0x0f172a;
+      const mesh = createHumanNPCMesh(shirt, pants, true);
+      mesh.position.set(x, 0.2, z);
+      scene.add(mesh);
+      const npc = {
+        type,
+        mesh,
+        pos: mesh.position,
+        hp: isPolice ? 90 : 100,
+        maxHp: isPolice ? 90 : 100,
+        state: 'PATROL',
+        shootCooldown: 0.8 + Math.random(),
+        patrolOrigin: new THREE.Vector3(x, 0, z),
+        patrolAngle: Math.random() * Math.PI * 2,
+        walkPhase: 0
+      };
+      enemies.push(npc);
+      return npc;
+    }
+
+    // Spawn Syndicate Guards around the Industrial Warehouse (300, 180)
+    [
+      [272, 172], [272, 188], [286, 174], [294, 185], [302, 175]
+    ].forEach(([gx, gz]) => spawnHostileNPC(gx, gz, 'syndicate'));
+
+    // =========================================================================
+    // 12. WORLD MISSION BEACON & CHECKPOINT VISUALS
+    // =========================================================================
+    const beaconGroup = new THREE.Group();
+    const beaconCyl = new THREE.Mesh(
+      new THREE.CylinderGeometry(3.2, 3.2, 18, 24, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0xfacc15, transparent: true, opacity: 0.38, side: THREE.DoubleSide })
+    );
+    beaconCyl.position.y = 9;
+    const beaconRing = new THREE.Mesh(
+      new THREE.RingGeometry(2.8, 3.6, 24),
+      new THREE.MeshBasicMaterial({ color: 0xfef08a, side: THREE.DoubleSide })
+    );
+    beaconRing.rotation.x = -Math.PI / 2;
+    beaconRing.position.y = 0.2;
+    beaconGroup.add(beaconCyl, beaconRing);
+    scene.add(beaconGroup);
+
+    // =========================================================================
+    // 13. INPUT & CAMERA CONTROLS (WASD, Mouse, Keys)
+    // =========================================================================
+    const keys = {};
+    let isMouseDragging = false;
+
+    window.addEventListener('keydown', (e) => {
+      const code = e.code;
+      keys[code] = true;
+      SFX.init();
+
+      if (code === 'KeyM') { e.preventDefault(); toggleMap(); }
+      else if (code === 'Tab') { e.preventDefault(); toggleInventory(); }
+      else if (code === 'Escape' || code === 'KeyP') { e.preventDefault(); togglePause(); }
+      else if (code === 'KeyN') { e.preventDefault(); togglePhone(); }
+      else if (code === 'KeyE') { e.preventDefault(); handleInteract(); }
+      else if (code === 'KeyC') { e.preventDefault(); toggleCrouch(); }
+      else if (code === 'KeyF') { e.preventDefault(); triggerMelee(); }
+      else if (code === 'KeyR') { e.preventDefault(); reloadWeapon(); }
+      else if (code === 'KeyQ') { e.preventDefault(); cycleWeapon(1); }
+      else if (code === 'KeyH' && STATE.player.inVehicle) { SFX.horn(); }
+      else if (code === 'Digit1') selectWeaponIndex(0);
+      else if (code === 'Digit2') selectWeaponIndex(1);
+      else if (code === 'Digit3') selectWeaponIndex(2);
+      else if (code === 'Digit4') selectWeaponIndex(3);
+      else if (code === 'Digit5') selectWeaponIndex(4);
+    });
+
+    window.addEventListener('keyup', (e) => {
+      keys[e.code] = false;
+    });
+
+    canvas.addEventListener('mousedown', (e) => {
+      SFX.init();
+      if (STATE.paused || STATE.mapOpen || STATE.invOpen) return;
+      isMouseDragging = true;
+
+      if (document.pointerLockElement !== canvas && canvas.requestPointerLock) {
+        try { canvas.requestPointerLock(); } catch (err) {}
+      }
+
+      if (e.button === 0 && !STATE.player.inVehicle) {
+        keys['MouseLeft'] = true;
+        triggerPrimaryAttack();
+      }
+    });
+
+    window.addEventListener('mouseup', (e) => {
+      isMouseDragging = false;
+      if (e.button === 0) keys['MouseLeft'] = false;
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (STATE.paused || STATE.mapOpen || STATE.invOpen) return;
+      if (document.pointerLockElement === canvas || isMouseDragging) {
+        STATE.camera.yaw -= e.movementX * STATE.mouseSens;
+        STATE.camera.pitch = Math.max(0.06, Math.min(1.15, STATE.camera.pitch + e.movementY * STATE.mouseSens));
+      }
+    });
+
+    window.addEventListener('wheel', (e) => {
+      if (STATE.paused || STATE.mapOpen || STATE.invOpen) return;
+      if (!STATE.player.inVehicle) {
+        cycleWeapon(e.deltaY > 0 ? 1 : -1);
+      }
+    });
+
+    // =========================================================================
+    // 14. COLLISION DETECTION & LINE-OF-SIGHT HELPERS
+    // =========================================================================
+    function resolveWorldCollisions(pos, radius) {
+      pos.x = Math.max(-520, Math.min(440, pos.x));
+      pos.z = Math.max(-440, Math.min(440, pos.z));
+
+      if (pos.x > 169 && pos.x < 207) {
+        const onBridge = (Math.abs(pos.z - 0) < 13) || (Math.abs(pos.z - 120) < 13) || (Math.abs(pos.z + 120) < 13);
+        if (!onBridge) {
+          pos.x = pos.x < 188 ? 169 : 207;
+        }
+      }
+
+      for (let i = 0; i < colliders.length; i++) {
+        const b = colliders[i];
+        const closestX = Math.max(b.minX, Math.min(pos.x, b.maxX));
+        const closestZ = Math.max(b.minZ, Math.min(pos.z, b.maxZ));
+        const dx = pos.x - closestX;
+        const dz = pos.z - closestZ;
+        const distSq = dx * dx + dz * dz;
+
+        if (distSq < radius * radius) {
+          const dist = Math.sqrt(distSq);
+          if (dist > 0.0001) {
+            const overlap = radius - dist;
+            pos.x += (dx / dist) * overlap;
+            pos.z += (dz / dist) * overlap;
+          } else {
+            pos.z = b.maxZ + radius + 0.5;
+          }
+          return b;
+        }
+      }
+      return null;
+    }
+
+    function hasLineOfSight(ax, az, bx, bz) {
+      const steps = 12;
+      for (let s = 1; s < steps; s++) {
+        const t = s / steps;
+        const px = ax + (bx - ax) * t;
+        const pz = az + (bz - az) * t;
+        for (let i = 0; i < colliders.length; i++) {
+          const c = colliders[i];
+          if (px >= c.minX && px <= c.maxX && pz >= c.minZ && pz <= c.maxZ) {
+            return false;
+          }
+        }
+      }
+      return true;
+    }
+
+    // =========================================================================
+    // 15. WANTED SYSTEM & POLICE AI MANAGER
+    // =========================================================================
+    function reportCrime(starsMin, reason) {
+      if (STATE.crimeCooldown > 0 && STATE.wantedLevel >= starsMin) return;
+      STATE.crimeCooldown = 1.5;
+      const prev = STATE.wantedLevel;
+      STATE.wantedLevel = Math.min(5, Math.max(STATE.wantedLevel + 1, starsMin));
+      STATE.searchProgress = 0;
+      STATE.policeHasLOS = true;
+
+      if (STATE.wantedLevel > prev) {
+        showToast('POLICE DISPATCH (911)', `Crime reported: ${reason}! Wanted Level increased to ${STATE.wantedLevel} ★!`);
+        ensurePoliceUnitsForStars();
+      }
+    }
+
+    function ensurePoliceUnitsForStars() {
+      const desiredCars = STATE.wantedLevel;
+      const activePoliceCars = vehicles.filter(v => v.isPolice && v !== STATE.player.inVehicle);
+      for (let i = activePoliceCars.length; i < desiredCars; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 65 + Math.random() * 35;
+        const sx = STATE.player.pos.x + Math.cos(angle) * dist;
+        const sz = STATE.player.pos.z + Math.sin(angle) * dist;
+        spawnVehicle('police', sx, sz, angle + Math.PI, false);
+      }
+
+      if (STATE.wantedLevel >= 4 && roadblocks.length === 0) {
+        const rbX = 165;
+        const rbZ = 0;
+        const rbCar = spawnVehicle('police', rbX, rbZ - 4, Math.PI / 2, false);
+        const officer = spawnHostileNPC(rbX - 3, rbZ + 3, 'police');
+        roadblocks.push({ rbCar, officer });
+        showToast('POLICE LOCKDOWN', 'WARNING: Tactical Police Roadblocks deployed on main bridge approaches!');
+      }
+    }
+
+    function clearWantedLevel() {
+      STATE.wantedLevel = 0;
+      STATE.searchProgress = 0;
+      STATE.policeHasLOS = false;
+      for (let i = enemies.length - 1; i >= 0; i--) {
+        if (enemies[i].type === 'police') {
+          scene.remove(enemies[i].mesh);
+          enemies.splice(i, 1);
+        }
+      }
+      roadblocks.length = 0;
+    }
+
+    // =========================================================================
+    // 16. COMBAT, WEAPONS & DAMAGE SYSTEM
+    // =========================================================================
+    function selectWeaponIndex(idx) {
+      if (idx < 0 || idx >= WEAPONS_DATA.length) return;
+      if (!WEAPONS_DATA[idx].owned) {
+        showToast('ARMORY', `${WEAPONS_DATA[idx].name} is locked. Purchase it in [Tab] Gear & Armory or at the 24/7 Store!`);
+        return;
+      }
+      STATE.player.weaponIdx = idx;
+      heldGunMesh.visible = (idx !== 0);
+      updateHUD();
+    }
+
+    function cycleWeapon(dir) {
+      let idx = STATE.player.weaponIdx;
+      for (let n = 0; n < WEAPONS_DATA.length; n++) {
+        idx = (idx + dir + WEAPONS_DATA.length) % WEAPONS_DATA.length;
+        if (WEAPONS_DATA[idx].owned) {
+          selectWeaponIndex(idx);
+          return;
+        }
+      }
+    }
+
+    function reloadWeapon() {
+      const w = WEAPONS_DATA[STATE.player.weaponIdx];
+      if (w.id === 'fists' || STATE.player.reloadTimer > 0) return;
+      const curMag = STATE.player.magAmmo[w.id];
+      const curRes = STATE.player.reserveAmmo[w.id];
+      if (curMag >= w.magSize || curRes <= 0) return;
+
+      STATE.player.reloadTimer = 1.1;
+      SFX.reload();
+    }
+
+    function triggerMelee() {
+      if (STATE.player.inVehicle || STATE.player.meleeTimer > 0 || STATE.wasted) return;
+      STATE.player.meleeTimer = 0.42;
+      SFX.shoot('fists');
+
+      const pPos = STATE.player.pos;
+      enemies.forEach(e => {
+        if (e.hp > 0 && e.pos.distanceTo(pPos) < 3.6) {
+          damageEnemy(e, 38);
+        }
+      });
+      pedestrians.forEach(p => {
+        if (p.hp > 0 && p.pos.distanceTo(pPos) < 3.4) {
+          p.hp -= 35;
+          p.panicTimer = 10;
+          reportCrime(1, 'Street Assault');
+        }
+      });
+    }
+
+    function triggerPrimaryAttack() {
+      if (STATE.player.inVehicle || STATE.paused || STATE.mapOpen || STATE.invOpen || STATE.wasted) return;
+      const w = WEAPONS_DATA[STATE.player.weaponIdx];
+      if (w.id === 'fists') {
+        triggerMelee();
+        return;
+      }
+      if (STATE.player.fireCooldown > 0 || STATE.player.reloadTimer > 0) return;
+
+      if (STATE.player.magAmmo[w.id] <= 0) {
+        reloadWeapon();
+        return;
+      }
+
+      STATE.player.magAmmo[w.id]--;
+      STATE.player.fireCooldown = w.fireRate;
+      SFX.shoot(w.id);
+
+      muzzleFlash.visible = true;
+      setTimeout(() => { muzzleFlash.visible = false; }, 55);
+
+      STATE.player.yaw = STATE.camera.yaw + Math.PI;
+      playerGroup.rotation.y = STATE.player.yaw;
+
+      pedestrians.forEach(p => {
+        if (p.pos.distanceTo(STATE.player.pos) < 45) p.panicTimer = 12;
+      });
+      if (Math.random() < 0.35) {
+        reportCrime(1, 'Public Discharge of Firearm');
+      }
+
+      const aimDir = new THREE.Vector3();
+      camera.getWorldDirection(aimDir);
+      const origin = STATE.player.pos.clone().add(new THREE.Vector3(0, 1.45, 0));
+
+      for (let p = 0; p < w.pellets; p++) {
+        const dir = aimDir.clone();
+        dir.x += (Math.random() - 0.5) * w.spread;
+        dir.y += (Math.random() - 0.5) * w.spread;
+        dir.z += (Math.random() - 0.5) * w.spread;
+        dir.normalize();
+
+        spawnBulletTracer(origin, dir, w.range);
+
+        for (let i = 0; i < enemies.length; i++) {
+          const e = enemies[i];
+          if (e.hp <= 0) continue;
+          const toEnemy = e.pos.clone().add(new THREE.Vector3(0, 1.1, 0)).sub(origin);
+          const proj = toEnemy.dot(dir);
+          if (proj > 0 && proj < w.range) {
+            const perpSq = toEnemy.lengthSq() - proj * proj;
+            if (perpSq < 1.35) {
+              damageEnemy(e, w.damage);
+              break;
+            }
+          }
+        }
+
+        for (let i = 0; i < vehicles.length; i++) {
+          const v = vehicles[i];
+          const toVeh = v.pos.clone().add(new THREE.Vector3(0, 0.9, 0)).sub(origin);
+          const proj = toVeh.dot(dir);
+          if (proj > 0 && proj < w.range) {
+            const perpSq = toVeh.lengthSq() - proj * proj;
+            if (perpSq < 3.2) {
+              v.hp = Math.max(0, v.hp - w.damage * 0.45);
+              break;
+            }
+          }
+        }
+      }
+      updateHUD();
+    }
+
+    function spawnBulletTracer(origin, dir, maxDist) {
+      const len = Math.min(maxDist, 55);
+      const end = origin.clone().addScaledVector(dir, len);
+      const geo = new THREE.BufferGeometry().setFromPoints([origin, end]);
+      const mat = new THREE.LineBasicMaterial({ color: 0xfef08a, transparent: true, opacity: 0.85 });
+      const line = new THREE.Line(geo, mat);
+      scene.add(line);
+      bullets.push({ line, life: 0.07 });
+    }
+
+    function damageEnemy(enemy, amount) {
+      enemy.hp -= amount;
+      enemy.state = 'ATTACK';
+      const hm = document.getElementById('hit-marker');
+      if (hm) {
+        hm.classList.remove('hidden');
+        setTimeout(() => hm.classList.add('hidden'), 110);
+      }
+      if (enemy.hp <= 0) {
+        enemy.mesh.rotation.x = -Math.PI / 2;
+        enemy.mesh.position.y = 0.25;
+        STATE.cash += 120;
+        SFX.cash();
+        if (enemy.type === 'police') {
+          reportCrime(Math.min(5, STATE.wantedLevel + 1), 'Assault on Police Officer');
+        }
+        setTimeout(() => {
+          scene.remove(enemy.mesh);
+          const idx = enemies.indexOf(enemy);
+          if (idx !== -1) enemies.splice(idx, 1);
+        }, 3500);
+      }
+    }
+
+    function damagePlayer(amount, sourceLabel) {
+      if (STATE.wasted) return;
+      if (STATE.player.armor > 0) {
+        const absorb = Math.min(STATE.player.armor, amount * 0.65);
+        STATE.player.armor = Math.max(0, STATE.player.armor - absorb);
+        amount -= absorb;
+      }
+      STATE.player.hp = Math.max(0, STATE.player.hp - amount);
+
+      const flash = document.getElementById('damage-flash');
+      if (flash) {
+        flash.style.opacity = '1';
+        setTimeout(() => { flash.style.opacity = '0'; }, 180);
+      }
+
+      if (STATE.player.hp <= 0) {
+        triggerPlayerDefeat(sourceLabel === 'police' ? 'BUSTED' : 'WASTED');
+      }
+    }
+
+    function triggerPlayerDefeat(titleText) {
+      STATE.wasted = true;
+      failCurrentMission(titleText === 'BUSTED' ? 'Arrested by Metro Police!' : 'Critical injury during mission!');
+      const ov = document.getElementById('wasted-overlay');
+      const ti = document.getElementById('wasted-title');
+      if (ti) ti.textContent = titleText || 'WASTED';
+      if (ov) ov.classList.remove('hidden');
+
+      setTimeout(() => {
+        if (STATE.player.inVehicle) exitCurrentVehicle();
+        STATE.player.pos.set(-55, 0, -38);
+        STATE.player.hp = 100;
+        STATE.player.armor = 50;
+        clearWantedLevel();
+        STATE.wasted = false;
+        if (ov) ov.classList.add('hidden');
+        startMission(STATE.currentMissionIdx);
+        showToast('METRO MEDICAL CENTER', 'Discharged with full health outside Vance Safehouse.');
+      }, 2600);
+    }
+
+    // =========================================================================
+    // 17. VEHICLE ENTER / EXIT & INTERACTION HANDLER ([E] KEY)
+    // =========================================================================
+    function exitCurrentVehicle() {
+      const veh = STATE.player.inVehicle;
+      if (!veh) return;
+      STATE.player.inVehicle = null;
+      STATE.player.transitionTimer = 0.35;
+
+      const leftDir = new THREE.Vector3(Math.cos(veh.heading), 0, -Math.sin(veh.heading));
+      const exitPos = veh.pos.clone().addScaledVector(leftDir, veh.spec.w * 0.85 + 1.1);
+      exitPos.y = 0;
+      resolveWorldCollisions(exitPos, 0.7);
+      STATE.player.pos.copy(exitPos);
+      playerGroup.position.copy(exitPos);
+      playerGroup.visible = true;
+      document.getElementById('hud-speedometer').classList.add('hidden');
+    }
+
+    function handleInteract() {
+      if (STATE.wasted || STATE.paused) return;
+
+      if (STATE.player.inVehicle) {
+        exitCurrentVehicle();
+        return;
+      }
+
+      const curMission = MISSIONS[STATE.currentMissionIdx];
+      if (curMission && curMission.id === 5 && STATE.missionStageIdx === 1) {
+        const distToDrive = Math.hypot(STATE.player.pos.x - 306, STATE.player.pos.z - 180);
+        if (distToDrive < 8.5) {
+          SFX.cash();
+          STATE.missionStageIdx = 2;
+          reportCrime(2, 'Syndicate Data Vault Breach');
+          showToast('ELENA (ENCRYPTED LINK)', 'Data Drive secured! Police and Syndicate units are converging—get across the bridge now!');
+          return;
+        }
+      }
+
+      for (let i = 0; i < interactiveZones.length; i++) {
+        const z = interactiveZones[i];
+        const d = Math.hypot(STATE.player.pos.x - z.x, STATE.player.pos.z - z.z);
+        if (d < z.radius) {
+          if (z.type === 'safehouse') {
+            STATE.player.hp = 100;
+            STATE.player.armor = 100;
+            clearWantedLevel();
+            saveProgress();
+            SFX.cash();
+            showToast('VANCE SAFEHOUSE', 'Health & Armor restored to 100%, Wanted Heat cleared, and Game Progress saved!');
+            return;
+          } else if (z.type === 'garage' || z.type === 'store' || z.type === 'clothing') {
+            toggleInventory();
+            return;
+          }
+        }
+      }
+
+      let nearest = null;
+      let bestDist = 6.5;
+      vehicles.forEach(v => {
+        const d = v.pos.distanceTo(STATE.player.pos);
+        if (d < bestDist) {
+          bestDist = d;
+          nearest = v;
+        }
+      });
+
+      if (nearest) {
+        const wasTraffic = nearest.isTraffic;
+        nearest.isTraffic = false;
+        STATE.player.inVehicle = nearest;
+        STATE.player.transitionTimer = 0.4;
+        STATE.camera.yaw = nearest.heading + Math.PI;
+        document.getElementById('hud-speedometer').classList.remove('hidden');
+
+        if (wasTraffic || nearest.isPolice) {
+          const policeNear = vehicles.some(v => v.isPolice && v !== nearest && v.pos.distanceTo(nearest.pos) < 85);
+          if (policeNear || nearest.isPolice) {
+            reportCrime(nearest.isPolice ? 2 : 1, 'Grand Theft Auto');
+          }
+        }
+        SFX.playTone(180, 320, 0.14, 'triangle', 0.08);
+      }
+    }
+
+    function toggleCrouch() {
+      if (STATE.player.inVehicle) return;
+      STATE.player.isCrouching = !STATE.player.isCrouching;
+    }
+
+    // =========================================================================
+    // 18. STORY MISSION MANAGER (All 6 Playable Missions + Complete & Fail)
+    // =========================================================================
+    let courierVehicle = null;
+    const raceOpponents = [];
+
+    function startMission(idx) {
+      if (idx < 0 || idx >= MISSIONS.length) return;
+      STATE.currentMissionIdx = idx;
+      STATE.missionActive = true;
+      STATE.missionStageIdx = 0;
+      STATE.missionTimer = 0;
+      const m = MISSIONS[idx];
+
+      showToast(`MISSION ${m.id} STARTED`, m.briefing);
+      SFX.cash();
+
+      if (m.id === 2) {
+        courierVehicle = spawnVehicle('sedan', -120, -42, 0, false, '#facc15');
+        courierVehicle.isMissionCourier = true;
+      } else if (m.id === 3) {
+        raceOpponents.forEach(r => scene.remove(r.mesh));
+        raceOpponents.length = 0;
+        const rColors = ['#06b6d4', '#a855f7', '#22c55e'];
+        for (let r = 0; r < 3; r++) {
+          const rv = spawnVehicle('sports', -236 + r * 4, -6, 0, false, rColors[r]);
+          rv.isRacer = true;
+          rv.racerCp = 0;
+          raceOpponents.push(rv);
+        }
+      } else if (m.id === 4) {
+        reportCrime(3, 'Captain Cross Citywide Sting');
+      } else if (m.id === 5) {
+        if (enemies.filter(e => e.type === 'syndicate').length < 4) {
+          [[274, 174], [282, 186], [295, 178], [302, 184]].forEach(([gx, gz]) => spawnHostileNPC(gx, gz, 'syndicate'));
+        }
+      } else if (m.id === 6) {
+        [[-12, 128], [12, 128], [0, 134]].forEach(([gx, gz]) => spawnHostileNPC(gx, gz, 'syndicate'));
+      }
+    }
+
+    function failCurrentMission(reason) {
+      const m = MISSIONS[STATE.currentMissionIdx];
+      if (!m) return;
+      SFX.fail();
+
+      const splash = document.getElementById('mission-splash');
+      const titleEl = document.getElementById('mission-splash-title');
+      const subEl = document.getElementById('mission-splash-sub');
+      if (titleEl) {
+        titleEl.textContent = 'MISSION FAILED';
+        titleEl.className = 'font-display font-black text-2xl sm:text-3xl text-rose-500 tracking-wider uppercase';
+      }
+      if (subEl) {
+        subEl.textContent = reason || 'Objective failed — resetting mission stage.';
+        subEl.className = 'text-sm sm:text-base font-semibold text-slate-200 mt-1';
+      }
+      if (splash) {
+        splash.classList.remove('hidden');
+        setTimeout(() => splash.classList.add('hidden'), 3000);
+      }
+
+      // Reset current mission stage cleanly so player can immediately retry
+      STATE.missionStageIdx = 0;
+      STATE.missionTimer = 0;
+      raceOpponents.forEach(r => scene.remove(r.mesh));
+      raceOpponents.length = 0;
+    }
+
+    function completeCurrentMission() {
+      const m = MISSIONS[STATE.currentMissionIdx];
+      if (!m) return;
+      STATE.cash += m.reward;
+      if (!STATE.completedMissions.includes(m.id)) {
+        STATE.completedMissions.push(m.id);
+      }
+      SFX.cash();
+
+      const splash = document.getElementById('mission-splash');
+      const titleEl = document.getElementById('mission-splash-title');
+      const subEl = document.getElementById('mission-splash-sub');
+      if (titleEl) {
+        titleEl.textContent = `${m.title.toUpperCase()} PASSED!`;
+        titleEl.className = 'font-display font-black text-2xl sm:text-3xl text-amber-400 tracking-wider uppercase';
+      }
+      if (subEl) {
+        subEl.textContent = `+$${m.reward.toLocaleString()} CASH REWARD`;
+        subEl.className = 'text-sm sm:text-base font-semibold text-emerald-300 mt-1';
+      }
+      if (splash) {
+        splash.classList.remove('hidden');
+        setTimeout(() => splash.classList.add('hidden'), 3200);
+      }
+
+      if (STATE.currentMissionIdx < MISSIONS.length - 1) {
+        STATE.currentMissionIdx++;
+        STATE.missionStageIdx = 0;
+        startMission(STATE.currentMissionIdx);
+      } else {
+        STATE.missionStageIdx = 0;
+        showToast('CITY OF CHAOS LIBERATED!', 'You completed all 6 Story Missions! Open your Phone [N] anytime to replay missions or rule the sandbox.');
+      }
+      saveProgress();
+    }
+
+    function getActiveObjectiveTarget() {
+      if (STATE.customWaypoint) return STATE.customWaypoint;
+      const m = MISSIONS[STATE.currentMissionIdx];
+      if (!m) return { x: 0, z: 0, label: 'Downtown' };
+      const st = m.stages[STATE.missionStageIdx] || m.stages[0];
+
+      if (st.type === 'enter_car') {
+        const nearCar = vehicles[0];
+        return nearCar ? { x: nearCar.pos.x, z: nearCar.pos.z, label: 'Nearest Vehicle' } : { x: -18, z: -28, label: 'Vehicle' };
+      } else if (st.type === 'race') {
+        const cpIdx = Math.min(STATE.missionTimer, st.checkpoints.length - 1);
+        const cp = st.checkpoints[cpIdx];
+        return { x: cp.x, z: cp.z, label: `Race Checkpoint ${cpIdx + 1}/${st.checkpoints.length}` };
+      } else if (st.type === 'evade_police') {
+        return { x: -60, z: -60, label: 'Break Line of Sight' };
+      } else if (st.target) {
+        return { x: st.target.x, z: st.target.z, label: m.title };
+      }
+      return { x: m.startPos.x, z: m.startPos.z, label: m.title };
+    }
+
+    function updateMissionLogic(dt) {
+      if (!STATE.missionActive) {
+        startMission(STATE.currentMissionIdx);
+      }
+      const m = MISSIONS[STATE.currentMissionIdx];
+      if (!m) return;
+      const st = m.stages[STATE.missionStageIdx];
+      if (!st) return;
+
+      const pPos = STATE.player.pos;
+      const extraBar = document.getElementById('mission-extra-bar');
+      const extraLeft = document.getElementById('mission-extra-left');
+      const extraRight = document.getElementById('mission-extra-right');
+      if (extraBar) extraBar.classList.add('hidden');
+
+      if (st.type === 'enter_car') {
+        if (STATE.player.inVehicle) {
+          STATE.missionStageIdx++;
+          SFX.cash();
+        }
+      } else if (st.type === 'goto') {
+        const d = Math.hypot(pPos.x - st.target.x, pPos.z - st.target.z);
+        if (d < st.radius && (!st.requireVehicle || STATE.player.inVehicle)) {
+          if (STATE.missionStageIdx < m.stages.length - 1) {
+            STATE.missionStageIdx++;
+            SFX.cash();
+          } else {
+            completeCurrentMission();
+          }
+        }
+      } else if (st.type === 'delivery') {
+        const d = Math.hypot(pPos.x - st.target.x, pPos.z - st.target.z);
+        const curVeh = STATE.player.inVehicle;
+        const hpPct = curVeh ? Math.round((curVeh.hp / curVeh.maxHp) * 100) : 100;
+        if (curVeh && hpPct < 20) {
+          failCurrentMission('Delivery vehicle chassis critically damaged!');
+          startMission(STATE.currentMissionIdx);
+          return;
+        }
+        if (extraBar) {
+          extraBar.classList.remove('hidden');
+          extraLeft.textContent = STATE.wantedLevel > 0 ? '⚠️ LOSE POLICE HEAT BEFORE DROP' : '✓ CLEAR FOR DELIVERY';
+          extraRight.textContent = curVeh ? `CAR HP: ${hpPct}%` : 'ENTER CAR';
+        }
+        if (d < st.radius && curVeh && STATE.wantedLevel === 0) {
+          completeCurrentMission();
+        }
+      } else if (st.type === 'race') {
+        const cpIdx = STATE.missionTimer;
+        const cp = st.checkpoints[cpIdx];
+        if (extraBar) {
+          extraBar.classList.remove('hidden');
+          extraLeft.textContent = `STREET RACE CHECKPOINT ${cpIdx + 1} / ${st.checkpoints.length}`;
+          extraRight.textContent = STATE.player.inVehicle ? 'POSITION: 1ST' : 'GET IN A CAR!';
+        }
+
+        // Update AI Racers
+        for (let rIdx = 0; rIdx < raceOpponents.length; rIdx++) {
+          const rv = raceOpponents[rIdx];
+          const rTarget = st.checkpoints[Math.min(rv.racerCp, st.checkpoints.length - 1)];
+          const dx = rTarget.x - rv.pos.x;
+          const dz = rTarget.z - rv.pos.z;
+          const dist = Math.hypot(dx, dz);
+          if (dist < 14) {
+            rv.racerCp++;
+            if (rv.racerCp >= st.checkpoints.length && STATE.missionTimer < st.checkpoints.length - 1) {
+              failCurrentMission('Rival street racer crossed the finish line first!');
+              startMission(STATE.currentMissionIdx);
+              return;
+            }
+          }
+          rv.heading = Math.atan2(dx, dz);
+          const spd = 25 + rIdx * 2.0;
+          rv.pos.x += Math.sin(rv.heading) * spd * dt;
+          rv.pos.z += Math.cos(rv.heading) * spd * dt;
+          rv.mesh.rotation.y = rv.heading;
+        }
+
+        if (cp && Math.hypot(pPos.x - cp.x, pPos.z - cp.z) < 16) {
+          SFX.cash();
+          STATE.missionTimer++;
+          if (STATE.missionTimer >= st.checkpoints.length) {
+            raceOpponents.forEach(r => scene.remove(r.mesh));
+            raceOpponents.length = 0;
+            completeCurrentMission();
+          }
+        }
+      } else if (st.type === 'evade_police') {
+        if (STATE.wantedLevel === 0) {
+          STATE.missionStageIdx++;
+          SFX.cash();
+          showToast('ELENA', 'Nice driving! Police lost your trail. Head back to the Safehouse.');
+        }
+      } else if (st.type === 'steal_drive') {
+        const d = Math.hypot(pPos.x - st.target.x, pPos.z - st.target.z);
+        if (d < 4.5 && !STATE.player.inVehicle) {
+          SFX.cash();
+          STATE.missionStageIdx = 2;
+          reportCrime(2, 'Syndicate Vault Raid');
+          showToast('ELENA', 'Encrypted Data Drive downloaded! Escape across the Main Bridge!');
+        }
+      } else if (st.type === 'upload_hold') {
+        const d = Math.hypot(pPos.x - st.target.x, pPos.z - st.target.z);
+        if (extraBar) {
+          extraBar.classList.remove('hidden');
+          const pct = Math.min(100, Math.round((STATE.missionTimer / st.duration) * 100));
+          extraLeft.textContent = d < st.radius ? '📡 UPLOADING SYNDICATE FILES...' : '⚠️ RETURN TO BROADCAST TOWER';
+          extraRight.textContent = `${pct}%`;
+        }
+        if (d < st.radius) {
+          STATE.missionTimer += dt;
+          if (STATE.missionTimer >= st.duration) {
+            STATE.missionStageIdx++;
+            STATE.missionTimer = 0;
+            reportCrime(4, 'Citywide Broadcast Hack');
+            showToast('CAPTAIN CROSS (ALL UNITS)', 'ALL UNITS LOCK DOWN THE BRIDGES! DO NOT LET VANCE REACH SUNSET PIER!');
+          }
+        }
+      } else if (st.type === 'final_escape') {
+        const d = Math.hypot(pPos.x - st.target.x, pPos.z - st.target.z);
+        if (d < st.radius) {
+          clearWantedLevel();
+          completeCurrentMission();
+        }
+      }
+
+      const target = getActiveObjectiveTarget();
+      beaconGroup.position.set(target.x, 0, target.z);
+      beaconGroup.rotation.y += dt * 1.4;
+    }
+
+    // =========================================================================
+    // 19. MAIN PHYSICS & AI SIMULATION LOOP (Delta-Time Based)
+    // =========================================================================
+    let trafficLightTimer = 0;
+
+    function updateSimulation(dt) {
+      if (STATE.paused || STATE.wasted) return;
+
+      STATE.timeOfDay = (STATE.timeOfDay + dt * 0.02) % 24;
+      if (STATE.crimeCooldown > 0) STATE.crimeCooldown -= dt;
+      if (STATE.player.fireCooldown > 0) STATE.player.fireCooldown -= dt;
+      if (STATE.player.meleeTimer > 0) STATE.player.meleeTimer -= dt;
+
+      if (STATE.player.reloadTimer > 0) {
+        STATE.player.reloadTimer -= dt;
+        if (STATE.player.reloadTimer <= 0) {
+          const w = WEAPONS_DATA[STATE.player.weaponIdx];
+          const needed = w.magSize - STATE.player.magAmmo[w.id];
+          const take = Math.min(needed, STATE.player.reserveAmmo[w.id]);
+          STATE.player.magAmmo[w.id] += take;
+          STATE.player.reserveAmmo[w.id] -= take;
+        }
+      }
+
+      if (keys['MouseLeft'] && !STATE.player.inVehicle) {
+        const w = WEAPONS_DATA[STATE.player.weaponIdx];
+        if (w.id === 'smg' || w.id === 'rifle') triggerPrimaryAttack();
+      }
+
+      if (keys['ArrowLeft']) STATE.camera.yaw += 1.9 * dt;
+      if (keys['ArrowRight']) STATE.camera.yaw -= 1.9 * dt;
+
+      // Traffic Lights Cycle
+      trafficLightTimer += dt;
+      if (trafficLightTimer > 10) {
+        trafficLightTimer = 0;
+        trafficLights.forEach(tl => {
+          tl.nsGreen = !tl.nsGreen;
+          tl.greenNS.material.color.setHex(tl.nsGreen ? 0x22c55e : 0x14532d);
+          tl.redNS.material.color.setHex(tl.nsGreen ? 0x450a0a : 0xef4444);
+          tl.greenEW.material.color.setHex(tl.nsGreen ? 0x14532d : 0x22c55e);
+          tl.redEW.material.color.setHex(tl.nsGreen ? 0xef4444 : 0x450a0a);
+        });
+      }
+
+      // Rain Particle Fall Update
+      if (STATE.isRaining && rainSystem.visible) {
+        rainSystem.position.set(STATE.player.pos.x, 0, STATE.player.pos.z);
+        const posArr = rainGeo.attributes.position.array;
+        for (let i = 1; i < posArr.length; i += 3) {
+          posArr[i] -= 48 * dt;
+          if (posArr[i] < 0) posArr[i] = 62;
+        }
+        rainGeo.attributes.position.needsUpdate = true;
+      }
+
+      // PLAYER MOVEMENT OR DRIVING CONTROLS
+      const p = STATE.player;
+      if (p.transitionTimer > 0) p.transitionTimer = Math.max(0, p.transitionTimer - dt);
+
+      if (p.inVehicle) {
+        const v = p.inVehicle;
+        const spec = v.spec;
+        const tuningBoost = 1 + (STATE.tuningLevel - 1) * 0.14;
+        const topSpeed = spec.maxSpeed * tuningBoost;
+
+        const throttle = (keys['KeyW'] || keys['ArrowUp']) ? 1 : 0;
+        const reverse = (keys['KeyS'] || keys['ArrowDown']) ? 1 : 0;
+        const steerInput = ((keys['KeyA'] ? 1 : 0) - (keys['KeyD'] ? 1 : 0));
+        const handbrake = !!keys['Space'];
+
+        if (throttle) {
+          v.speed += spec.accel * tuningBoost * dt;
+        } else if (reverse) {
+          if (v.speed > 1.5) v.speed -= spec.brake * dt;
+          else v.speed -= spec.accel * 0.55 * dt;
+        } else {
+          v.speed *= Math.pow(0.45, dt);
+        }
+
+        if (handbrake) {
+          v.speed *= Math.pow(0.12, dt);
+          if (Math.abs(v.speed) > 12) {
+            SFX.skid();
+            spawnSkidMark(v.pos, v.heading);
+          }
+        }
+
+        v.speed = Math.max(-topSpeed * 0.4, Math.min(topSpeed, v.speed));
+
+        if (v.mesh.userData.brakeMat) {
+          v.mesh.userData.brakeMat.color.setHex((reverse || handbrake) ? 0xff2222 : 0x6b1111);
+        }
+
+        const speedFactor = Math.min(1, Math.abs(v.speed) / 8);
+        const dirSign = v.speed >= -0.2 ? 1 : -1;
+        const driftMultiplier = handbrake ? 1.45 : 1.0;
+        v.heading += steerInput * spec.turnSpeed * speedFactor * dirSign * driftMultiplier * dt;
+
+        v.pos.x += Math.sin(v.heading) * v.speed * dt;
+        v.pos.z += Math.cos(v.heading) * v.speed * dt;
+
+        const hitWall = resolveWorldCollisions(v.pos, Math.max(spec.w, spec.l) * 0.45);
+        if (hitWall && Math.abs(v.speed) > 10) {
+          SFX.crash();
+          v.hp = Math.max(10, v.hp - Math.abs(v.speed) * 0.35);
+          v.speed *= -0.35;
+        }
+
+        const targetPitch = (throttle ? -0.035 : (reverse || handbrake ? 0.045 : 0));
+        const targetRoll = steerInput * (v.classId === 'moto' ? 0.38 : -0.055) * speedFactor;
+        v.pitch += (targetPitch - v.pitch) * 10 * dt;
+        v.roll += (targetRoll - v.roll) * 10 * dt;
+
+        v.mesh.position.copy(v.pos);
+        v.mesh.rotation.set(v.pitch, v.heading, v.roll);
+
+        p.pos.copy(v.pos);
+        playerGroup.position.set(v.pos.x, v.pos.y + 0.35, v.pos.z);
+        playerGroup.rotation.y = v.heading;
+        playerGroup.visible = (v.classId === 'moto');
+
+        if (Math.abs(v.speed) > 3 && !isMouseDragging && document.pointerLockElement !== canvas) {
+          const targetCamYaw = v.heading + Math.PI;
+          let diff = targetCamYaw - STATE.camera.yaw;
+          while (diff > Math.PI) diff -= Math.PI * 2;
+          while (diff < -Math.PI) diff += Math.PI * 2;
+          STATE.camera.yaw += diff * 2.4 * dt;
+        }
+      } else {
+        playerGroup.visible = true;
+        const fwd = (keys['KeyW'] ? 1 : 0) - (keys['KeyS'] ? 1 : 0);
+        const str = (keys['KeyD'] ? 1 : 0) - (keys['KeyA'] ? 1 : 0);
+        p.isSprinting = !!keys['ShiftLeft'] || !!keys['ShiftRight'];
+
+        const moveLen = Math.hypot(fwd, str);
+        if (moveLen > 0.01) {
+          const camForward = new THREE.Vector3(-Math.sin(STATE.camera.yaw), 0, -Math.cos(STATE.camera.yaw));
+          const camRight = new THREE.Vector3(Math.cos(STATE.camera.yaw), 0, -Math.sin(STATE.camera.yaw));
+          const moveDir = new THREE.Vector3()
+            .addScaledVector(camForward, fwd / moveLen)
+            .addScaledVector(camRight, str / moveLen)
+            .normalize();
+
+          const baseSpeed = p.isCrouching ? 4.8 : (p.isSprinting ? 14.2 : 8.8);
+          p.vel.x = moveDir.x * baseSpeed;
+          p.vel.z = moveDir.z * baseSpeed;
+          p.yaw = Math.atan2(moveDir.x, moveDir.z);
+
+          p.walkCycle += dt * (p.isSprinting ? 15 : 10);
+          p.stepTimer += dt;
+          if (p.stepTimer > (p.isSprinting ? 0.28 : 0.42) && p.isGrounded) {
+            p.stepTimer = 0;
+            SFX.footstep();
+          }
+        } else {
+          p.vel.x *= Math.pow(0.04, dt);
+          p.vel.z *= Math.pow(0.04, dt);
+          p.walkCycle = 0;
+        }
+
+        if (keys['Space'] && p.isGrounded) {
+          p.vel.y = 11.5;
+          p.isGrounded = false;
+          p.isCrouching = false;
+        }
+        p.vel.y -= 28 * dt;
+
+        p.pos.x += p.vel.x * dt;
+        p.pos.y += p.vel.y * dt;
+        p.pos.z += p.vel.z * dt;
+
+        if (p.pos.y <= 0) {
+          p.pos.y = 0;
+          p.vel.y = 0;
+          p.isGrounded = true;
+        }
+
+        resolveWorldCollisions(p.pos, 0.65);
+
+        playerGroup.position.copy(p.pos);
+        playerGroup.rotation.y = p.yaw;
+        const swing = Math.sin(p.walkCycle) * 0.65;
+        leftLeg.rotation.x = swing;
+        rightLeg.rotation.x = -swing;
+        leftArm.rotation.x = -swing * 0.7;
+        rightArm.rotation.x = p.meleeTimer > 0 ? -1.4 : (STATE.player.weaponIdx > 0 ? -0.55 : swing * 0.7);
+        playerTorso.position.y = p.isCrouching ? 0.95 : 1.25;
+        playerHead.position.y = p.isCrouching ? 1.55 : 1.88;
+      }
+
+      // UPDATE AI TRAFFIC & VEHICLE-TO-VEHICLE COLLISIONS
+      vehicles.forEach(v => {
+        if (v.isPolice && v.mesh.userData.redSiren) {
+          const flash = Math.sin(performance.now() * 0.015) > 0;
+          v.mesh.userData.redSiren.material.color.setHex(flash ? 0xff2222 : 0x450a0a);
+          v.mesh.userData.blueSiren.material.color.setHex(!flash ? 0x3b82f6 : 0x172554);
+        }
+
+        if (v === p.inVehicle || v.isRacer) return;
+
+        if (v.isTraffic) {
+          let targetSpd = 18;
+          for (let i = 0; i < trafficLights.length; i++) {
+            const tl = trafficLights[i];
+            const distToTL = Math.hypot(v.pos.x - tl.x, v.pos.z - tl.z);
+            if (distToTL > 11 && distToTL < 23) {
+              const movingNS = Math.abs(Math.cos(v.heading)) > 0.7;
+              if ((movingNS && !tl.nsGreen) || (!movingNS && tl.nsGreen)) {
+                targetSpd = 0;
+                break;
+              }
+            }
+          }
+          const fwdVec = new THREE.Vector3(Math.sin(v.heading), 0, Math.cos(v.heading));
+          const toPlayer = p.pos.clone().sub(v.pos);
+          if (toPlayer.length() < 14 && toPlayer.dot(fwdVec) > 0.5) {
+            targetSpd = 0;
+          }
+
+          v.speed += (targetSpd - v.speed) * 4 * dt;
+          v.pos.x += Math.sin(v.heading) * v.speed * dt;
+          v.pos.z += Math.cos(v.heading) * v.speed * dt;
+
+          if (v.pos.x > 380) v.pos.x = -380;
+          if (v.pos.x < -380) v.pos.x = 380;
+          if (v.pos.z > 380) v.pos.z = -380;
+          if (v.pos.z < -380) v.pos.z = 380;
+          v.mesh.position.copy(v.pos);
+          v.mesh.rotation.y = v.heading;
+        } else if (v.isPolice && STATE.wantedLevel > 0) {
+          const dx = p.pos.x - v.pos.x;
+          const dz = p.pos.z - v.pos.z;
+          const dist = Math.hypot(dx, dz);
+          const desiredYaw = Math.atan2(dx, dz);
+          let diff = desiredYaw - v.heading;
+          while (diff > Math.PI) diff -= Math.PI * 2;
+          while (diff < -Math.PI) diff += Math.PI * 2;
+          v.heading += Math.sign(diff) * Math.min(Math.abs(diff), 2.4 * dt);
+
+          if (dist > 14) {
+            v.speed = Math.min(34 + STATE.wantedLevel * 3, v.speed + 26 * dt);
+          } else {
+            v.speed *= 0.85;
+            if (!p.inVehicle && enemies.filter(e => e.type === 'police').length < STATE.wantedLevel + 1 && Math.random() < 0.015) {
+              spawnHostileNPC(v.pos.x + 2.5, v.pos.z + 2.5, 'police');
+            }
+          }
+          v.pos.x += Math.sin(v.heading) * v.speed * dt;
+          v.pos.z += Math.cos(v.heading) * v.speed * dt;
+          resolveWorldCollisions(v.pos, 2.0);
+          v.mesh.position.copy(v.pos);
+          v.mesh.rotation.y = v.heading;
+        }
+
+        if (p.inVehicle && v !== p.inVehicle) {
+          const dist = v.pos.distanceTo(p.inVehicle.pos);
+          if (dist < 3.6) {
+            const push = p.inVehicle.pos.clone().sub(v.pos).normalize();
+            p.inVehicle.pos.addScaledVector(push, (3.6 - dist) * 0.6);
+            v.pos.addScaledVector(push, -(3.6 - dist) * 0.6);
+            if (Math.abs(p.inVehicle.speed) > 12) {
+              SFX.crash();
+              p.inVehicle.speed *= 0.6;
+              if (v.isPolice) reportCrime(Math.max(2, STATE.wantedLevel), 'Ramming Police Cruiser');
+            }
+          }
+        }
+      });
+
+      // UPDATE PEDESTRIANS
+      pedestrians.forEach(ped => {
+        if (ped.hp <= 0) return;
+        const distToPlayer = ped.pos.distanceTo(p.pos);
+
+        if (p.inVehicle && distToPlayer < 2.2 && Math.abs(p.inVehicle.speed) > 10) {
+          ped.hp = 0;
+          ped.mesh.rotation.x = -Math.PI / 2;
+          SFX.crash();
+          reportCrime(1, 'Vehicular Hit & Run');
+          return;
+        }
+
+        if (ped.panicTimer > 0) {
+          ped.panicTimer -= dt;
+          const away = ped.pos.clone().sub(p.pos).normalize();
+          ped.heading = Math.atan2(away.x, away.z);
+          ped.speed = 6.8;
+        } else {
+          ped.speed = 2.8;
+        }
+
+        ped.pos.x += Math.sin(ped.heading) * ped.speed * dt;
+        ped.pos.z += Math.cos(ped.heading) * ped.speed * dt;
+        const hitB = resolveWorldCollisions(ped.pos, 0.5);
+        if (hitB || Math.random() < 0.008) {
+          ped.heading += Math.PI / 2;
+        }
+        ped.walkPhase += dt * (ped.panicTimer > 0 ? 14 : 7);
+        ped.mesh.userData.legL.rotation.x = Math.sin(ped.walkPhase) * 0.5;
+        ped.mesh.userData.legR.rotation.x = -Math.sin(ped.walkPhase) * 0.5;
+        ped.mesh.position.copy(ped.pos);
+        ped.mesh.rotation.y = ped.heading;
+      });
+
+      // UPDATE ENEMY & POLICE FOOT NPCS
+      enemies.forEach(e => {
+        if (e.hp <= 0) return;
+        const dist = e.pos.distanceTo(p.pos);
+
+        if (p.inVehicle && dist < 2.3 && Math.abs(p.inVehicle.speed) > 12) {
+          damageEnemy(e, 120);
+          return;
+        }
+
+        const los = dist < 48 && hasLineOfSight(e.pos.x, e.pos.z, p.pos.x, p.pos.z);
+
+        if (e.type === 'police' && STATE.wantedLevel > 0) {
+          e.state = los ? 'ATTACK' : 'CHASE';
+        } else if (e.type === 'syndicate') {
+          if (dist < 34 && los) e.state = (e.hp < 45 ? 'COVER' : 'ATTACK');
+          else if (dist < 46) e.state = 'ALERT';
+          else e.state = 'PATROL';
+        }
+
+        if (e.state === 'PATROL') {
+          e.patrolAngle += dt * 0.6;
+          const tx = e.patrolOrigin.x + Math.cos(e.patrolAngle) * 4;
+          const tz = e.patrolOrigin.z + Math.sin(e.patrolAngle) * 4;
+          e.heading = Math.atan2(tx - e.pos.x, tz - e.pos.z);
+          e.pos.x += Math.sin(e.heading) * 2.2 * dt;
+          e.pos.z += Math.cos(e.heading) * 2.2 * dt;
+          e.mesh.userData.torso.position.y = 1.2;
+        } else if (e.state === 'ALERT' || e.state === 'CHASE') {
+          e.heading = Math.atan2(p.pos.x - e.pos.x, p.pos.z - e.pos.z);
+          if (dist > 10) {
+            e.pos.x += Math.sin(e.heading) * 5.2 * dt;
+            e.pos.z += Math.cos(e.heading) * 5.2 * dt;
+            resolveWorldCollisions(e.pos, 0.55);
+          }
+          e.mesh.userData.torso.position.y = 1.2;
+        } else if (e.state === 'COVER' || e.state === 'ATTACK') {
+          e.heading = Math.atan2(p.pos.x - e.pos.x, p.pos.z - e.pos.z);
+          e.mesh.userData.torso.position.y = (e.state === 'COVER') ? 0.88 : 1.2;
+          e.shootCooldown -= dt;
+          if (e.shootCooldown <= 0 && los) {
+            e.shootCooldown = 1.15 + Math.random() * 0.6;
+            const eOrigin = e.pos.clone().add(new THREE.Vector3(0, 1.3, 0));
+            const eDir = p.pos.clone().add(new THREE.Vector3(0, 1.1, 0)).sub(eOrigin).normalize();
+            spawnBulletTracer(eOrigin, eDir, dist);
+            SFX.shoot('pistol');
+            if (Math.random() < (p.isCrouching ? 0.25 : 0.48)) {
+              damagePlayer(6 + STATE.wantedLevel, e.type);
+            }
+          }
+        }
+        e.mesh.position.copy(e.pos);
+        e.mesh.rotation.y = e.heading || 0;
+      });
+
+      // POLICE LINE-OF-SIGHT & EVASION SEARCH BAR
+      let nearestPoliceDist = 999;
+      let anyPoliceSeesPlayer = false;
+      const detectRange = p.isCrouching ? 42 : 78;
+
+      if (STATE.wantedLevel > 0) {
+        vehicles.forEach(v => {
+          if (v.isPolice && v !== p.inVehicle) {
+            const d = v.pos.distanceTo(p.pos);
+            if (d < nearestPoliceDist) nearestPoliceDist = d;
+            if (d < detectRange && hasLineOfSight(v.pos.x, v.pos.z, p.pos.x, p.pos.z)) {
+              anyPoliceSeesPlayer = true;
+            }
+          }
+        });
+        enemies.forEach(e => {
+          if (e.type === 'police' && e.hp > 0) {
+            const d = e.pos.distanceTo(p.pos);
+            if (d < nearestPoliceDist) nearestPoliceDist = d;
+            if (d < detectRange * 0.8 && hasLineOfSight(e.pos.x, e.pos.z, p.pos.x, p.pos.z)) {
+              anyPoliceSeesPlayer = true;
+            }
+          }
+        });
+
+        STATE.policeHasLOS = anyPoliceSeesPlayer;
+        if (anyPoliceSeesPlayer) {
+          STATE.searchProgress = Math.max(0, STATE.searchProgress - dt * 18);
+        } else {
+          const evadeSpeed = (16 - STATE.wantedLevel * 1.8);
+          STATE.searchProgress = Math.min(100, STATE.searchProgress + dt * evadeSpeed);
+          if (STATE.searchProgress >= 100) {
+            clearWantedLevel();
+            STATE.cash += 250;
+            SFX.cash();
+            showToast('POLICE DISPATCH', 'Pursuit evaded! Wanted Level cleared (+$250 Evasion Bonus).');
+          }
+        }
+      }
+
+      // Update Continuous Web Audio
+      const spdRatio = p.inVehicle ? (p.inVehicle.speed / p.inVehicle.spec.maxSpeed) : 0;
+      const engFreq = p.inVehicle ? p.inVehicle.spec.freq : 50;
+      SFX.updateContinuous(dt, !!p.inVehicle, spdRatio, engFreq, nearestPoliceDist, STATE.wantedLevel > 0);
+
+      for (let i = bullets.length - 1; i >= 0; i--) {
+        bullets[i].life -= dt;
+        if (bullets[i].life <= 0) {
+          scene.remove(bullets[i].line);
+          bullets.splice(i, 1);
+        }
+      }
+
+      // Update Third-Person Orbital / Driving Chase Camera
+      const camDist = p.inVehicle ? 10.5 : (p.isCrouching ? 5.8 : 7.2);
+      const camHeight = p.inVehicle ? 3.4 : (p.isCrouching ? 1.5 : 2.1);
+      const targetCenter = p.pos.clone().add(new THREE.Vector3(0, camHeight, 0));
+
+      const offsetX = Math.sin(STATE.camera.yaw) * Math.cos(STATE.camera.pitch) * camDist;
+      const offsetY = Math.sin(STATE.camera.pitch) * camDist;
+      const offsetZ = Math.cos(STATE.camera.yaw) * Math.cos(STATE.camera.pitch) * camDist;
+
+      const desiredCamPos = new THREE.Vector3(
+        targetCenter.x + offsetX,
+        Math.max(0.8, targetCenter.y + offsetY),
+        targetCenter.z + offsetZ
+      );
+
+      STATE.camera.currentPos.lerp(desiredCamPos, Math.min(1, dt * 14));
+      STATE.camera.lookTarget.lerp(targetCenter, Math.min(1, dt * 18));
+      camera.position.copy(STATE.camera.currentPos);
+      camera.lookAt(STATE.camera.lookTarget);
+
+      dirLight.target.position.copy(p.pos);
+      dirLight.target.updateMatrixWorld();
+
+      updateMissionLogic(dt);
+      updateHUD();
+      drawRadarMinimap();
+    }
+
+    function spawnSkidMark(pos, heading) {
+      if (skidMarks.length > 70) {
+        const old = skidMarks.shift();
+        scene.remove(old);
+      }
+      const m = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.6, 1.4),
+        new THREE.MeshBasicMaterial({ color: 0x090d16, transparent: true, opacity: 0.55 })
+      );
+      m.rotation.x = -Math.PI / 2;
+      m.rotation.z = -heading;
+      m.position.set(pos.x, 0.08, pos.z);
+      scene.add(m);
+      skidMarks.push(m);
+    }
+
+    // =========================================================================
+    // 20. GTA-STYLE HUD & RADAR MINIMAP RENDERING
+    // =========================================================================
+    const minimapCanvas = document.getElementById('minimap-canvas');
+    const minimapCtx = minimapCanvas.getContext('2d');
+    const fullmapCanvas = document.getElementById('fullmap-canvas');
+    const fullmapCtx = fullmapCanvas.getContext('2d');
+
+    function getDistrictName(x, z) {
+      if (x < -340) return 'Sunset Beach & Pier';
+      if (x > 200) return 'Industrial Harbor Zone';
+      if (z < -200) return 'North Hills Suburbs';
+      if (z > 200) return 'Southside Residential';
+      return 'Downtown Core';
+    }
+
+    function updateHUD() {
+      const p = STATE.player;
+      document.getElementById('hud-district').textContent = getDistrictName(p.pos.x, p.pos.z);
+      document.getElementById('hud-cash').textContent = '$' + STATE.cash.toLocaleString();
+
+      const hrs = Math.floor(STATE.timeOfDay);
+      const mins = Math.floor((STATE.timeOfDay - hrs) * 60);
+      const clockStr = `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+      document.getElementById('hud-clock').textContent = clockStr;
+      const pClock = document.getElementById('phone-clock');
+      if (pClock) pClock.textContent = clockStr;
+
+      const hpPct = Math.max(0, Math.min(100, Math.round(p.hp)));
+      const armPct = Math.max(0, Math.min(100, Math.round(p.armor)));
+      document.getElementById('hud-hp-bar').style.width = hpPct + '%';
+      document.getElementById('hud-hp-val').textContent = hpPct;
+      document.getElementById('hud-armor-bar').style.width = armPct + '%';
+      document.getElementById('hud-armor-val').textContent = armPct;
+
+      const w = WEAPONS_DATA[p.weaponIdx];
+      document.getElementById('hud-weapon-name').textContent = w.name;
+      document.getElementById('hud-weapon-icon').textContent = w.icon;
+      document.getElementById('hud-ammo-mag').textContent = w.id === 'fists' ? '∞' : p.magAmmo[w.id];
+      document.getElementById('hud-ammo-reserve').textContent = w.id === 'fists' ? '∞' : p.reserveAmmo[w.id];
+      const reloadHint = document.getElementById('hud-reload-hint');
+      if (reloadHint) {
+        if (w.id !== 'fists' && p.magAmmo[w.id] <= 3) reloadHint.classList.remove('hidden');
+        else reloadHint.classList.add('hidden');
+      }
+
+      const starEls = document.querySelectorAll('#wanted-stars .star-item');
+      const statusLbl = document.getElementById('wanted-status-label');
+      const searchBox = document.getElementById('search-bar-container');
+
+      starEls.forEach((el, idx) => {
+        el.className = 'star-item';
+        if (idx < STATE.wantedLevel) {
+          el.classList.add(STATE.policeHasLOS ? 'star-pursuit' : 'star-searching');
+        } else {
+          el.classList.add('text-slate-700');
+        }
+      });
+
+      if (STATE.wantedLevel === 0) {
+        statusLbl.textContent = 'CLEAR';
+        statusLbl.className = 'text-[10px] font-bold uppercase tracking-wider text-slate-400';
+        searchBox.classList.add('hidden');
+      } else {
+        searchBox.classList.remove('hidden');
+        if (STATE.policeHasLOS) {
+          statusLbl.textContent = 'PURSUIT ACTIVE';
+          statusLbl.className = 'text-[10px] font-bold uppercase tracking-wider text-rose-400';
+          document.getElementById('search-bar-text').textContent = 'POLICE HAVE LINE OF SIGHT!';
+        } else {
+          statusLbl.textContent = 'SEARCHING...';
+          statusLbl.className = 'text-[10px] font-bold uppercase tracking-wider text-sky-300';
+          document.getElementById('search-bar-text').textContent = 'HIDDEN — EVADING PURSUIT';
+        }
+        const pct = Math.round(STATE.searchProgress);
+        document.getElementById('search-bar-pct').textContent = pct + '%';
+        document.getElementById('search-bar-fill').style.width = pct + '%';
+      }
+
+      if (p.inVehicle) {
+        const v = p.inVehicle;
+        const mph = Math.round(Math.abs(v.speed) * 2.2);
+        document.getElementById('speedo-veh-name').textContent = v.spec.name;
+        document.getElementById('speedo-mph').textContent = mph;
+        document.getElementById('speedo-gear').textContent = v.speed < -0.5 ? 'R' : (mph < 2 ? 'N' : 'D' + Math.min(6, Math.ceil(mph / 22)));
+        document.getElementById('speedo-rpm').style.width = Math.min(100, 15 + (mph % 28) * 3) + '%';
+        document.getElementById('speedo-hp-text').textContent = Math.round((v.hp / v.maxHp) * 100) + '%';
+      }
+
+      const m = MISSIONS[STATE.currentMissionIdx];
+      const st = m ? (m.stages[STATE.missionStageIdx] || m.stages[0]) : null;
+      const target = getActiveObjectiveTarget();
+      const distMeters = Math.round(Math.hypot(p.pos.x - target.x, p.pos.z - target.z));
+      document.getElementById('hud-mission-tag').textContent = `MISSION ${STATE.currentMissionIdx + 1}/${MISSIONS.length}`;
+      document.getElementById('hud-mission-title').textContent = STATE.customWaypoint ? `GPS: ${STATE.customWaypoint.label}` : (m ? m.title : 'Free Roam');
+      document.getElementById('hud-mission-obj').textContent = st ? st.text : 'Explore City of Chaos.';
+      document.getElementById('hud-waypoint-dist').textContent = `${distMeters}m`;
+
+      const promptEl = document.getElementById('interaction-prompt');
+      const promptTxt = document.getElementById('interaction-text');
+      const intBadge = document.getElementById('hud-interior-badge');
+      let promptStr = '';
+      let insideAny = false;
+
+      interactiveZones.forEach(z => {
+        if (Math.hypot(p.pos.x - z.x, p.pos.z - z.z) < z.radius) {
+          insideAny = true;
+          if (z.type === 'safehouse') promptStr = 'Use Safehouse (Heal, Clear Heat & Save)';
+          else if (z.type === 'garage') promptStr = 'Open Auto Customs & Dealership Menu';
+          else if (z.type === 'store') promptStr = 'Shop at 24/7 Store & Armory';
+          else if (z.type === 'clothing') promptStr = 'Browse Outfits at Metro Threads';
+          else if (z.type === 'warehouse') promptStr = 'Download Syndicate Data Drive';
+        }
+      });
+
+      if (intBadge) {
+        if (insideAny) intBadge.classList.remove('hidden');
+        else intBadge.classList.add('hidden');
+      }
+
+      if (!promptStr && !p.inVehicle) {
+        vehicles.forEach(v => {
+          if (v.pos.distanceTo(p.pos) < 6.2) {
+            promptStr = `Enter ${v.spec.name}`;
+          }
+        });
+      }
+
+      if (promptStr) {
+        promptTxt.textContent = promptStr;
+        promptEl.classList.remove('hidden');
+      } else {
+        promptEl.classList.add('hidden');
+      }
+    }
+
+    function drawRadarMinimap() {
+      const ctx = minimapCtx;
+      const w = minimapCanvas.width;
+      const h = minimapCanvas.height;
+      const cx = w / 2;
+      const cy = h / 2;
+      const scale = 0.42;
+      const px = STATE.player.pos.x;
+      const pz = STATE.player.pos.z;
+
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = '#0b1320';
+      ctx.fillRect(0, 0, w, h);
+
+      ctx.save();
+      ctx.translate(cx, cy);
+
+      ctx.fillStyle = '#0369a1';
+      ctx.fillRect((-700 - px) * scale, (-600 - pz) * scale, 270 * scale, 1200 * scale);
+      ctx.fillRect((172 - px) * scale, (-600 - pz) * scale, 32 * scale, 1200 * scale);
+
+      ctx.fillStyle = '#a16207';
+      ctx.fillRect((-430 - px) * scale, (-600 - pz) * scale, 80 * scale, 1200 * scale);
+
+      ctx.fillStyle = '#334155';
+      const rCoords = [-360, -240, -120, 0, 120, 240, 360];
+      rCoords.forEach(rc => {
+        ctx.fillRect((rc - 12 - px) * scale, (-420 - pz) * scale, 24 * scale, 840 * scale);
+        ctx.fillRect((-420 - px) * scale, (rc - 12 - pz) * scale, 840 * scale, 24 * scale);
+      });
+
+      const target = getActiveObjectiveTarget();
+      ctx.strokeStyle = STATE.customWaypoint ? '#e879f9' : '#facc15';
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo((target.x - px) * scale, (target.z - pz) * scale);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      interactiveZones.forEach(z => {
+        ctx.fillStyle = z.type === 'safehouse' ? '#10b981' : '#38bdf8';
+        ctx.beginPath();
+        ctx.arc((z.x - px) * scale, (z.z - pz) * scale, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      vehicles.forEach(v => {
+        if (v === STATE.player.inVehicle) return;
+        const vx = (v.pos.x - px) * scale;
+        const vz = (v.pos.z - pz) * scale;
+        if (Math.hypot(vx, vz) > cx - 4) return;
+        if (v.isPolice && STATE.wantedLevel > 0) {
+          ctx.fillStyle = (Math.floor(performance.now() / 200) % 2 === 0) ? '#ef4444' : '#3b82f6';
+          ctx.beginPath();
+          ctx.arc(vx, vz, 4.2, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          ctx.fillStyle = '#94a3b8';
+          ctx.fillRect(vx - 1.5, vz - 1.5, 3, 3);
+        }
+      });
+
+      enemies.forEach(e => {
+        if (e.hp <= 0) return;
+        ctx.fillStyle = '#ef4444';
+        ctx.beginPath();
+        ctx.arc((e.pos.x - px) * scale, (e.pos.z - pz) * scale, 3, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      let tx = (target.x - px) * scale;
+      let tz = (target.z - pz) * scale;
+      const tDist = Math.hypot(tx, tz);
+      if (tDist > cx - 8) {
+        tx = (tx / tDist) * (cx - 8);
+        tz = (tz / tDist) * (cx - 8);
+      }
+      ctx.fillStyle = STATE.customWaypoint ? '#e879f9' : '#facc15';
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(tx, tz, 5.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      const heading = STATE.player.inVehicle ? STATE.player.inVehicle.heading : STATE.player.yaw;
+      ctx.rotate(-heading + Math.PI);
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.moveTo(0, -6);
+      ctx.lineTo(4.5, 5);
+      ctx.lineTo(0, 2.5);
+      ctx.lineTo(-4.5, 5);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.restore();
+    }
+
+    function drawFullCityMap() {
+      const ctx = fullmapCtx;
+      const w = fullmapCanvas.width;
+      const h = fullmapCanvas.height;
+      const cx = w / 2;
+      const cy = h / 2;
+      const scale = w / 1000;
+
+      ctx.fillStyle = '#090f1a';
+      ctx.fillRect(0, 0, w, h);
+
+      ctx.save();
+      ctx.translate(cx, cy);
+
+      ctx.fillStyle = '#0284c7';
+      ctx.fillRect(-500 * scale, -500 * scale, 95 * scale, 1000 * scale);
+      ctx.fillRect(172 * scale, -500 * scale, 32 * scale, 1000 * scale);
+
+      ctx.fillStyle = '#ca8a04';
+      ctx.fillRect(-410 * scale, -500 * scale, 55 * scale, 1000 * scale);
+
+      ctx.fillStyle = '#334155';
+      [-360, -240, -120, 0, 120, 240, 360].forEach(r => {
+        ctx.fillRect((r - 12) * scale, -400 * scale, 24 * scale, 800 * scale);
+        ctx.fillRect(-400 * scale, (r - 12) * scale, 800 * scale, 24 * scale);
+      });
+
+      interactiveZones.forEach(z => {
+        ctx.fillStyle = '#38bdf8';
+        ctx.beginPath();
+        ctx.arc(z.x * scale, z.z * scale, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#e2e8f0';
+        ctx.font = 'bold 10px Inter';
+        ctx.fillText(z.label.split(' ')[0], z.x * scale + 8, z.z * scale + 3);
+      });
+
+      const target = getActiveObjectiveTarget();
+      ctx.fillStyle = '#facc15';
+      ctx.beginPath();
+      ctx.arc(target.x * scale, target.z * scale, 7, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(STATE.player.pos.x * scale, STATE.player.pos.z * scale, 6, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+    }
+
+    fullmapCanvas.addEventListener('click', (e) => {
+      const rect = fullmapCanvas.getBoundingClientRect();
+      const nx = (e.clientX - rect.left) / rect.width;
+      const nz = (e.clientY - rect.top) / rect.height;
+      const wx = Math.round((nx - 0.5) * 1000);
+      const wz = Math.round((nz - 0.5) * 1000);
+      STATE.customWaypoint = { x: wx, z: wz, label: `Custom Pin (${wx}, ${wz})` };
+      drawFullCityMap();
+      SFX.cash();
+    });
+
+    // =========================================================================
+    // 21. UI MODALS, MENUS, SHOPS & SMARTPHONE CONTROLLERS
+    // =========================================================================
+    let toastTimeout = null;
+    function showToast(sender, text) {
+      document.getElementById('toast-sender').textContent = sender;
+      document.getElementById('toast-text').textContent = text;
+      const el = document.getElementById('hud-toast');
+      el.classList.remove('opacity-60');
+      if (toastTimeout) clearTimeout(toastTimeout);
+      toastTimeout = setTimeout(() => el.classList.add('opacity-60'), 6000);
+    }
+
+    function renderInventoryAndShops() {
+      const wList = document.getElementById('inv-weapons-list');
+      wList.innerHTML = WEAPONS_DATA.map((w, idx) => {
+        const isEq = (STATE.player.weaponIdx === idx);
+        const btnLabel = w.owned ? (isEq ? 'EQUIPPED' : 'Equip') : `Buy ($${w.price})`;
+        const btnClass = w.owned
+          ? (isEq ? 'bg-amber-500 text-slate-950 font-black' : 'bg-slate-700 hover:bg-slate-600 text-white font-semibold')
+          : 'bg-emerald-600 hover:bg-emerald-500 text-white font-bold';
+        return `
+          <div class="p-2 rounded-lg bg-slate-800/90 flex items-center justify-between gap-2">
+            <div>
+              <span class="mr-1">${w.icon}</span>
+              <b class="text-white">${w.name}</b>
+              <div class="text-[10px] text-slate-400">DMG: ${w.damage} &bull; Ammo: ${w.id === 'fists' ? '∞' : STATE.player.magAmmo[w.id] + '/' + STATE.player.reserveAmmo[w.id]}</div>
+            </div>
+            <button onclick="window.GameApp.handleWeaponShop(${idx})" class="px-2.5 py-1 rounded text-[11px] ${btnClass}">${btnLabel}</button>
+          </div>
+        `;
+      }).join('');
+
+      const vList = document.getElementById('inv-vehicles-list');
+      vList.innerHTML = Object.values(VEHICLE_CLASSES).map(vc => {
+        const owned = STATE.ownedVehicles.includes(vc.id);
+        const btnLabel = owned ? 'Spawn at Player' : `Buy ($${vc.price})`;
+        const btnClass = owned ? 'bg-cyan-600 hover:bg-cyan-500 text-white font-bold' : 'bg-emerald-600 hover:bg-emerald-500 text-white font-bold';
+        return `
+          <div class="p-2 rounded-lg bg-slate-800/90 flex items-center justify-between gap-2">
+            <div>
+              <b class="text-white">${vc.name}</b>
+              <div class="text-[10px] text-slate-400">Top Speed: ${Math.round(vc.maxSpeed * 2.2)} MPH</div>
+            </div>
+            <button onclick="window.GameApp.handleVehicleShop('${vc.id}')" class="px-2.5 py-1 rounded text-[11px] ${btnClass}">${btnLabel}</button>
+          </div>
+        `;
+      }).join('');
+
+      const oList = document.getElementById('inv-outfits-list');
+      oList.innerHTML = OUTFITS.map(o => {
+        const isEq = (STATE.currentOutfit === o.id);
+        const btnLabel = o.owned ? (isEq ? 'WORN' : 'Wear') : `Buy ($${o.price})`;
+        const btnClass = o.owned
+          ? (isEq ? 'bg-purple-500 text-white font-black' : 'bg-slate-700 hover:bg-slate-600 text-white')
+          : 'bg-emerald-600 hover:bg-emerald-500 text-white font-bold';
+        return `
+          <div class="p-2 rounded-lg bg-slate-800/90 flex items-center justify-between gap-2">
+            <span class="font-semibold text-slate-200">${o.name}</span>
+            <button onclick="window.GameApp.handleOutfitShop('${o.id}')" class="px-2.5 py-1 rounded text-[11px] ${btnClass}">${btnLabel}</button>
+          </div>
+        `;
+      }).join('');
+
+      document.getElementById('stat-missions').textContent = `${STATE.completedMissions.length} / ${MISSIONS.length}`;
+      document.getElementById('stat-vehicles').textContent = `${STATE.ownedVehicles.length} / ${Object.keys(VEHICLE_CLASSES).length}`;
+      document.getElementById('stat-tuning').textContent = `Lv. ${STATE.tuningLevel}`;
+    }
+
+    function renderPhoneMissions() {
+      const container = document.getElementById('phone-missions-list');
+      if (!container) return;
+      container.innerHTML = MISSIONS.map((m, idx) => {
+        const done = STATE.completedMissions.includes(m.id);
+        const active = (STATE.currentMissionIdx === idx);
+        return `
+          <button onclick="window.GameApp.selectPhoneMission(${idx})" class="w-full text-left p-2 rounded-xl border ${active ? 'bg-amber-500/20 border-amber-400' : 'bg-slate-800/80 border-slate-700'} hover:bg-slate-700 transition flex items-center justify-between">
+            <div>
+              <div class="font-bold text-xs text-white">${m.title}</div>
+              <div class="text-[10px] text-emerald-400">Reward: $${m.reward.toLocaleString()} ${done ? '✓ COMPLETED' : ''}</div>
+            </div>
+            <span class="px-2 py-0.5 rounded bg-amber-500 text-slate-950 font-black text-[10px]">${active ? 'ACTIVE' : 'START'}</span>
+          </button>
+        `;
+      }).join('');
+    }
+
+    function toggleMap() {
+      STATE.mapOpen = !STATE.mapOpen;
+      if (STATE.mapOpen) {
+        STATE.invOpen = false;
+        STATE.paused = false;
+        document.getElementById('inventory-modal').classList.add('hidden');
+        document.getElementById('pause-modal').classList.add('hidden');
+        document.getElementById('map-modal').classList.remove('hidden');
+        if (document.exitPointerLock) document.exitPointerLock();
+        drawFullCityMap();
+      } else {
+        document.getElementById('map-modal').classList.add('hidden');
+      }
+    }
+
+    function toggleInventory() {
+      STATE.invOpen = !STATE.invOpen;
+      if (STATE.invOpen) {
+        STATE.mapOpen = false;
+        STATE.paused = false;
+        document.getElementById('map-modal').classList.add('hidden');
+        document.getElementById('pause-modal').classList.add('hidden');
+        document.getElementById('inventory-modal').classList.remove('hidden');
+        if (document.exitPointerLock) document.exitPointerLock();
+        renderInventoryAndShops();
+      } else {
+        document.getElementById('inventory-modal').classList.add('hidden');
+      }
+    }
+
+    function togglePhone() {
+      STATE.phoneOpen = !STATE.phoneOpen;
+      const drawer = document.getElementById('phone-drawer');
+      if (STATE.phoneOpen) {
+        renderPhoneMissions();
+        drawer.classList.remove('hidden');
+        if (document.exitPointerLock) document.exitPointerLock();
+      } else {
+        drawer.classList.add('hidden');
+      }
+    }
+
+    function togglePause() {
+      if (STATE.mapOpen) { toggleMap(); return; }
+      if (STATE.invOpen) { toggleInventory(); return; }
+      STATE.paused = !STATE.paused;
+      const modal = document.getElementById('pause-modal');
+      if (STATE.paused) {
+        modal.classList.remove('hidden');
+        if (document.exitPointerLock) document.exitPointerLock();
+      } else {
+        modal.classList.add('hidden');
+      }
+    }
+
+    // =========================================================================
+    // 22. GLOBAL API EXPOSED FOR UI HANDLERS & AUTOMATED TESTING
+    // =========================================================================
+    window.GameApp = {
+      STATE,
+      vehicles,
+      pedestrians,
+      enemies,
+      MISSIONS,
+      toggleMap,
+      toggleInventory,
+      togglePhone,
+      togglePause,
+      handleInteract,
+      triggerPrimaryAttack,
+      triggerMelee,
+      toggleCrouch,
+      cycleWeapon,
+      startMission,
+      completeCurrentMission,
+      failCurrentMission,
+      reportCrime,
+      clearWantedLevel,
+      updateSimulation,
+
+      cycleEnvironment() {
+        const order = ['sunset', 'night', 'rain', 'day'];
+        const next = order[(order.indexOf(STATE.envPreset) + 1) % order.length];
+        applyEnvironmentPreset(next);
+      },
+
+      setEnvironment(preset) {
+        applyEnvironmentPreset(preset);
+      },
+
+      toggleAudioMute() {
+        SFX.muted = !SFX.muted;
+        document.getElementById('audio-icon').textContent = SFX.muted ? '🔇' : '🔊';
+        document.getElementById('btn-pause-audio').textContent = SFX.muted ? 'Muted' : 'Active';
+      },
+
+      updateSensitivity(val) {
+        STATE.mouseSens = Number(val) * 0.00052;
+      },
+
+      clearCustomWaypoint() {
+        STATE.customWaypoint = null;
+        drawFullCityMap();
+      },
+
+      setBookmarkWaypoint(x, z, label) {
+        STATE.customWaypoint = { x, z, label };
+        drawFullCityMap();
+        showToast('GPS NAVIGATION', `Waypoint locked to ${label}. Follow the purple line on your radar!`);
+      },
+
+      triggerMissionShortcut() {
+        STATE.customWaypoint = null;
+        const t = getActiveObjectiveTarget();
+        showToast('MISSION DISPATCH', `Objective located at (${Math.round(t.x)}, ${Math.round(t.z)}). Follow the yellow radar line!`);
+      },
+
+      selectPhoneMission(idx) {
+        STATE.customWaypoint = null;
+        startMission(idx);
+        renderPhoneMissions();
+      },
+
+      phoneService(type) {
+        if (type === 'mechanic') {
+          if (STATE.cash < 300) { showToast('MARCO', 'Not enough cash ($300 required).'); return; }
+          STATE.cash -= 300;
+          spawnVehicle('sports', STATE.player.pos.x + 4, STATE.player.pos.z + 4, 0, false, '#ef4444');
+          SFX.cash();
+          showToast('MARCO (MECHANIC)', 'Delivered a fresh Apex GT Sports Car right next to you!');
+        } else if (type === 'clearheat') {
+          if (STATE.cash < 800) { showToast('ELENA', 'Need $800 to scrub the police dispatch servers.'); return; }
+          STATE.cash -= 800;
+          clearWantedLevel();
+          SFX.cash();
+          showToast('ELENA', 'Police APB wiped clean. Wanted Level reset to 0 Stars!');
+        } else if (type === 'supply') {
+          if (STATE.cash < 500) { showToast('ARMS DEALER', 'Need $500 for an emergency drop.'); return; }
+          STATE.cash -= 500;
+          STATE.player.hp = 100;
+          STATE.player.armor = 100;
+          WEAPONS_DATA.forEach(w => {
+            STATE.player.magAmmo[w.id] = w.magSize;
+            STATE.player.reserveAmmo[w.id] = w.reserveMax;
+          });
+          SFX.cash();
+          showToast('SUPPLY DROP', 'Health, Kevlar Armor, and all weapon ammunition fully replenished!');
+        }
+        saveProgress();
+        updateHUD();
+      },
+
+      handleWeaponShop(idx) {
+        const w = WEAPONS_DATA[idx];
+        if (!w) return;
+        if (w.owned) {
+          selectWeaponIndex(idx);
+        } else if (STATE.cash >= w.price) {
+          STATE.cash -= w.price;
+          w.owned = true;
+          STATE.player.magAmmo[w.id] = w.magSize;
+          STATE.player.reserveAmmo[w.id] = w.reserveMax;
+          selectWeaponIndex(idx);
+          SFX.cash();
+          saveProgress();
+        }
+        renderInventoryAndShops();
+      },
+
+      buyShopItem(item) {
+        if (item === 'heal' && STATE.cash >= 100) {
+          STATE.cash -= 100;
+          STATE.player.hp = Math.min(100, STATE.player.hp + 50);
+          SFX.cash();
+        } else if (item === 'armor' && STATE.cash >= 250) {
+          STATE.cash -= 250;
+          STATE.player.armor = 100;
+          SFX.cash();
+        } else if (item === 'ammo' && STATE.cash >= 200) {
+          STATE.cash -= 200;
+          WEAPONS_DATA.forEach(w => {
+            STATE.player.magAmmo[w.id] = w.magSize;
+            STATE.player.reserveAmmo[w.id] = w.reserveMax;
+          });
+          SFX.cash();
+        }
+        saveProgress();
+        renderInventoryAndShops();
+        updateHUD();
+      },
+
+      handleVehicleShop(classId) {
+        const vc = VEHICLE_CLASSES[classId];
+        if (!vc) return;
+        if (!STATE.ownedVehicles.includes(classId)) {
+          if (STATE.cash < vc.price) return;
+          STATE.cash -= vc.price;
+          STATE.ownedVehicles.push(classId);
+          SFX.cash();
+          saveProgress();
+        }
+        spawnVehicle(classId, STATE.player.pos.x + 4.5, STATE.player.pos.z + 4.5, 0, false, vc.color);
+        showToast('GARAGE DELIVERY', `Your ${vc.name} has been delivered next to you! Press [E] to drive.`);
+        renderInventoryAndShops();
+      },
+
+      applyVehiclePaint(hexStr) {
+        const targetVeh = STATE.player.inVehicle || vehicles[0];
+        if (targetVeh && targetVeh.mesh.userData.bodyMat) {
+          targetVeh.mesh.userData.bodyMat.color.set(hexStr);
+          SFX.cash();
+          showToast('AUTO CUSTOMS', 'Applied custom metallic respray!');
+        }
+      },
+
+      buyVehicleUpgrade(type) {
+        if (type === 'engine' && STATE.cash >= 600 && STATE.tuningLevel < 5) {
+          STATE.cash -= 600;
+          STATE.tuningLevel++;
+          SFX.cash();
+          saveProgress();
+        } else if (type === 'repair' && STATE.cash >= 150) {
+          STATE.cash -= 150;
+          if (STATE.player.inVehicle) STATE.player.inVehicle.hp = STATE.player.inVehicle.maxHp;
+          SFX.cash();
+        }
+        renderInventoryAndShops();
+      },
+
+      handleOutfitShop(outfitId) {
+        const o = OUTFITS.find(item => item.id === outfitId);
+        if (!o) return;
+        if (!o.owned) {
+          if (STATE.cash < o.price) return;
+          STATE.cash -= o.price;
+          o.owned = true;
+          SFX.cash();
+        }
+        applyOutfitToPlayer(outfitId);
+        renderInventoryAndShops();
+      },
+
+      saveGameManual() {
+        saveProgress();
+        SFX.cash();
+        showToast('SYSTEM', 'Progress saved to browser storage!');
+      },
+
+      resetSaveData() {
+        try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
+        STATE.cash = 2500;
+        STATE.completedMissions = [];
+        STATE.currentMissionIdx = 0;
+        STATE.ownedVehicles = ['sedan'];
+        STATE.tuningLevel = 1;
+        startMission(0);
+        renderInventoryAndShops();
+      },
+
+      restartCurrentMission() {
+        if (STATE.player.inVehicle) exitCurrentVehicle();
+        STATE.player.pos.set(-25, 0, -35);
+        STATE.player.hp = 100;
+        STATE.player.armor = 50;
+        clearWantedLevel();
+        startMission(STATE.currentMissionIdx);
+        if (STATE.paused) togglePause();
+      }
+    };
+
+    // =========================================================================
+    // 23. RESIZE HANDLER & MAIN ANIMATION LOOP
+    // =========================================================================
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    let lastTime = performance.now();
+    function animate(now) {
+      requestAnimationFrame(animate);
+      const dt = Math.min(0.05, Math.max(0.001, (now - lastTime) / 1000));
+      lastTime = now;
+
+      updateSimulation(dt);
+      renderer.render(scene, camera);
+    }
+
+    window.addEventListener('load', () => {
+      startMission(STATE.currentMissionIdx);
+      updateHUD();
+      requestAnimationFrame(animate);
+    });
+
+  })();
+  </script>
+</body>
+</html>

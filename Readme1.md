@@ -1,4 +1,4 @@
-# Build a Playable GTA-Style Open-World Game — “CITY OF CHAOS”
+# Build a Playable GTA-Style Open-World Game — “CITY OF CHAOS” Prompt
 
 Create a realistic, fully playable 3D open-world action game inspired by the freedom and gameplay systems of Grand Theft Auto. Use Three.js with JavaScript or TypeScript, or another suitable browser-based 3D engine.
 
